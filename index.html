@@ -7,6 +7,10 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <!-- Firebase v9 compat -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
   <style>
     :root{
       --primary:#1a237e;--pl:#3949ab;
@@ -15,12 +19,29 @@
     *{box-sizing:border-box}
     body{background:var(--bg);font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh;margin:0}
 
+    /* ── AUTH OVERLAY ───────────────────────────────────────────── */
+    #authOverlay{
+      position:fixed;inset:0;background:linear-gradient(135deg,var(--primary),var(--pl));
+      z-index:9999;display:flex;align-items:center;justify-content:center;
+    }
+    #authOverlay.d-none{display:none!important}
+    .auth-card{background:white;border-radius:18px;padding:2.5rem;width:100%;max-width:420px;
+      box-shadow:0 12px 40px rgba(0,0,0,.35)}
+    .auth-card h4{color:var(--primary);font-weight:700;margin-bottom:1.5rem;text-align:center}
+    .auth-tabs .btn{border-radius:8px 8px 0 0;border-bottom:none}
+
+    /* ── SETUP BANNER ───────────────────────────────────────────── */
+    #setupBanner{background:#fff3cd;border:2px solid #ffc107;border-radius:10px;
+      padding:1rem 1.25rem;margin-bottom:1rem;display:none}
+
     /* HEADER */
     .app-hdr{background:linear-gradient(135deg,var(--primary),var(--pl));color:white;
       padding:.85rem 1.5rem;display:flex;align-items:center;justify-content:space-between;
       box-shadow:0 3px 12px rgba(0,0,0,.25);position:sticky;top:0;z-index:200}
     .app-hdr h5{margin:0;font-size:1.1rem;font-weight:700}
     .app-hdr small{opacity:.75;font-size:.75rem}
+    .user-badge{background:rgba(255,255,255,.18);border-radius:20px;
+      padding:.2rem .75rem;font-size:.8rem;cursor:pointer}
 
     /* NAV */
     .nav-bar{background:white;border-bottom:2px solid #dde0ee;padding:0 1rem;display:flex;
@@ -44,894 +65,1369 @@
     .timer-slot[data-state="running"]{border-left-color:var(--success)}
     .timer-slot[data-state="paused"] {border-left-color:var(--warning)}
 
-    /* show / hide buttons via CSS data-state — no JS toggling needed */
+    /* show / hide buttons via CSS data-state */
     .timer-slot[data-state="stopped"] .s-resume,
     .timer-slot[data-state="stopped"] .s-pause,
     .timer-slot[data-state="stopped"] .s-stop   {display:none}
+    .timer-slot[data-state="running"]  .s-start,
+    .timer-slot[data-state="running"]  .s-resume,
+    .timer-slot[data-state="running"]  .s-remove {display:none}
+    .timer-slot[data-state="paused"]   .s-start,
+    .timer-slot[data-state="paused"]   .s-pause  {display:none}
 
-    .timer-slot[data-state="running"] .s-start,
-    .timer-slot[data-state="running"] .s-resume,
-    .timer-slot[data-state="running"] .s-remove  {display:none}
+    .timer-display{font-size:2.2rem;font-weight:700;color:var(--primary);
+      font-variant-numeric:tabular-nums;letter-spacing:.05em}
+    .timer-slot[data-state="running"] .timer-display{color:var(--success)}
+    .timer-slot[data-state="paused"]  .timer-display{color:var(--warning)}
 
-    .timer-slot[data-state="paused"]  .s-start,
-    .timer-slot[data-state="paused"]  .s-pause   {display:none}
+    .slot-project-name{font-weight:600;font-size:1rem;color:#333}
+    .slot-project-num {font-size:.8rem;color:#888}
 
-    .timer-slot[data-state="running"] .slot-sel,
-    .timer-slot[data-state="paused"]  .slot-sel  {pointer-events:none;opacity:.6}
-
-    .timer-slot[data-state="running"] .s-remove,
-    .timer-slot[data-state="paused"]  .s-remove  {display:none}
-
-    /* timer display */
-    .slot-time{
-      font-size:3rem;font-family:'Courier New',monospace;font-weight:700;
-      color:var(--primary);letter-spacing:4px;text-align:center;
-      padding:.4rem 0;transition:color .3s;line-height:1
-    }
-    .slot-time.running{color:var(--success)}
-    .slot-time.paused {color:var(--warning)}
-
-    /* buttons */
-    .btn-go{
-      border:none;border-radius:50px;padding:.5rem 1.4rem;
-      font-size:.875rem;font-weight:600;cursor:pointer;
-      transition:all .18s;color:white;display:inline-flex;align-items:center;gap:.3rem
-    }
-    .btn-go:disabled{opacity:.4;cursor:not-allowed}
-    .btn-go.start {background:var(--success)} .btn-go.start:hover:not(:disabled){background:#1b5e20}
-    .btn-go.pause {background:var(--warning)} .btn-go.pause:hover:not(:disabled){background:#bf360c}
-    .btn-go.stop  {background:var(--danger)}  .btn-go.stop:hover:not(:disabled) {background:#7f0000}
-
-    .pulse{animation:pulse 1.5s infinite}
-    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+    /* CARDS */
+    .stat-card{background:white;border-radius:14px;padding:1.25rem;
+      box-shadow:0 2px 12px rgba(0,0,0,.07);border-top:4px solid var(--pl)}
+    .stat-card .val{font-size:1.85rem;font-weight:700;color:var(--primary)}
+    .stat-card .lbl{font-size:.8rem;color:#777;text-transform:uppercase;letter-spacing:.05em}
 
     /* PROJECT CARDS */
-    .proj-card{background:white;border-radius:12px;padding:1.1rem 1.25rem;
-      margin-bottom:.85rem;box-shadow:0 1px 8px rgba(0,0,0,.06);
-      border-left:4px solid var(--pl);transition:box-shadow .2s}
+    .proj-card{background:white;border-radius:14px;padding:1.1rem 1.25rem;
+      box-shadow:0 2px 10px rgba(0,0,0,.07);border-left:5px solid var(--pl);
+      transition:box-shadow .2s}
     .proj-card:hover{box-shadow:0 4px 18px rgba(0,0,0,.12)}
 
-    /* SESSION ITEMS */
-    .sess-item{display:flex;justify-content:space-between;align-items:center;
-      padding:.65rem 1rem;border:1px solid #e8eaf6;border-radius:10px;
-      margin-bottom:.5rem;background:#fafbff}
+    /* PROGRESS */
+    .progress{height:8px;border-radius:4px;background:#e9ecef}
+    .progress-bar{background:linear-gradient(90deg,var(--pl),var(--primary));border-radius:4px}
+    .progress-bar.over{background:linear-gradient(90deg,#ef5350,var(--danger))}
 
-    /* KPI / CHART CARDS */
-    .kpi-card{background:white;border-radius:12px;padding:1.1rem;
-      box-shadow:0 1px 8px rgba(0,0,0,.06);text-align:center}
-    .kpi-card .val{font-size:1.85rem;font-weight:700;line-height:1.1}
-    .kpi-card .lbl{font-size:.78rem;color:#666;margin-top:.3rem}
-    .chart-card{background:white;border-radius:12px;padding:1.25rem;
-      box-shadow:0 1px 8px rgba(0,0,0,.06);margin-bottom:1rem}
-    .chart-card h6{color:var(--primary);font-weight:700;margin-bottom:1rem}
+    /* SESSION LOG */
+    .sess-row{background:white;border-radius:10px;padding:.75rem 1rem;
+      box-shadow:0 1px 6px rgba(0,0,0,.06);font-size:.875rem}
+    .sess-row .dur{font-weight:600;color:var(--primary)}
+    .sess-row .user-chip{background:#e8eaf6;color:var(--primary);border-radius:12px;
+      padding:.15rem .55rem;font-size:.75rem;font-weight:600}
+    .sess-row .notes-text{color:#666;font-size:.8rem;font-style:italic;margin-top:.25rem}
 
-    .tbl thead{background:var(--primary);color:white}
-    .tbl thead th{border:none;font-weight:500;padding:.65rem .85rem;font-size:.82rem}
-    .tbl tbody td{padding:.6rem .85rem;vertical-align:middle;font-size:.85rem}
-    .tbl tbody tr:hover{background:#f5f7ff}
+    /* USER CHIP in dashboard */
+    .user-chip{background:#e8eaf6;color:var(--primary);border-radius:12px;
+      padding:.15rem .55rem;font-size:.75rem;font-weight:600;display:inline-block;margin:.1rem}
 
-    .modal-header{background:var(--primary);color:white}
-    .modal-header .btn-close{filter:invert(1)}
+    /* CHART WRAPPER */
+    .chart-wrap{background:white;border-radius:14px;padding:1.25rem;
+      box-shadow:0 2px 12px rgba(0,0,0,.07)}
 
-    .tag-item{display:inline-flex;align-items:center;gap:.35rem;background:#e8eaf6;
-      color:var(--primary);padding:.25rem .65rem;border-radius:20px;margin:.2rem;
-      font-size:.82rem;font-weight:500}
-    .tag-x{cursor:pointer;color:var(--danger);font-weight:700;font-size:1rem;line-height:1}
-    .tag-x:hover{color:#7f0000}
+    /* SETTINGS */
+    .setting-section{background:white;border-radius:14px;padding:1.25rem;
+      box-shadow:0 2px 12px rgba(0,0,0,.07);margin-bottom:1.25rem}
+    .setting-section h6{color:var(--primary);font-weight:600;border-bottom:1px solid #e9ecef;
+      padding-bottom:.5rem;margin-bottom:1rem}
 
-    .progress{height:7px;border-radius:4px}
-    .stat-badge{padding:.3em .7em;border-radius:20px;font-size:.75rem;font-weight:600;color:white;white-space:nowrap}
-    .empty{text-align:center;color:#999;padding:2rem 1rem}
-    .empty i{font-size:2.5rem;display:block;margin-bottom:.5rem;opacity:.4}
+    /* SYNC INDICATOR */
+    .sync-dot{width:8px;height:8px;border-radius:50%;background:#4caf50;
+      display:inline-block;animation:pulse 2s infinite}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+    .sync-dot.offline{background:#ef5350;animation:none}
 
-    /* add-timer button area */
-    .add-timer-area{
-      border:2px dashed #c5cae9;border-radius:14px;padding:1.5rem;
-      text-align:center;cursor:pointer;transition:all .2s;color:var(--pl);
-      background:rgba(63,81,181,.04)
-    }
-    .add-timer-area:hover{border-color:var(--pl);background:rgba(63,81,181,.08)}
+    /* MODAL NOTES */
+    .notes-modal-header{background:linear-gradient(135deg,var(--primary),var(--pl));
+      color:white;border-radius:.5rem .5rem 0 0}
 
-    @media(max-width:640px){
-      .slot-time{font-size:2.3rem;letter-spacing:2px}
-      .content{padding:.85rem}
+    /* responsive */
+    @media(max-width:576px){
+      .timer-display{font-size:1.6rem}
+      .stat-card .val{font-size:1.4rem}
     }
   </style>
 </head>
 <body>
 
-<!-- HEADER -->
-<div class="app-hdr">
-  <div>
-    <h5><i class="bi bi-lightning-charge-fill me-2" style="color:#ffd54f"></i>PSS Time Tracker</h5>
-    <small>Power System Studies — Engineering Team</small>
-  </div>
-  <div class="text-end">
-    <div id="liveClock" style="font-size:1.05rem;font-weight:700;letter-spacing:1px"></div>
-    <small id="liveDate"></small>
+<!-- ════════════════════════════════════════════════════════════════
+     AUTH OVERLAY
+════════════════════════════════════════════════════════════════ -->
+<div id="authOverlay">
+  <div class="auth-card">
+    <h4><i class="bi bi-lightning-charge-fill me-2"></i>PSS Time Tracker</h4>
+    <p class="text-center text-muted mb-4" style="font-size:.85rem">Power System Studies · Team Portal</p>
+
+    <!-- tabs -->
+    <div class="d-flex mb-0 auth-tabs" id="authTabs">
+      <button class="btn btn-primary flex-fill me-1" id="tabSignin" onclick="showTab('signin')">Sign In</button>
+      <button class="btn btn-outline-primary flex-fill ms-1" id="tabSignup" onclick="showTab('signup')">Sign Up</button>
+    </div>
+
+    <div id="authForm" style="border:1px solid #dee2e6;border-top:none;border-radius:0 0 10px 10px;padding:1.25rem">
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Name <span id="nameField" style="display:none">*</span></label>
+        <div id="nameRow" class="mb-3" style="display:none">
+          <input type="text" id="authName" class="form-control" placeholder="Your full name">
+        </div>
+        <label class="form-label fw-semibold">Email</label>
+        <input type="email" id="authEmail" class="form-control" placeholder="you@example.com">
+      </div>
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Password</label>
+        <input type="password" id="authPassword" class="form-control" placeholder="Password">
+      </div>
+      <div id="authError" class="alert alert-danger py-2 d-none" style="font-size:.85rem"></div>
+      <button class="btn btn-primary w-100 fw-semibold" onclick="authSubmit()" id="authBtn">Sign In</button>
+      <div class="text-center mt-2">
+        <a href="#" onclick="forgotPwd()" class="text-muted" style="font-size:.82rem">Forgot password?</a>
+      </div>
+    </div>
   </div>
 </div>
 
-<!-- NAV -->
-<div class="nav-bar">
-  <a id="nav-timer"     class="active" onclick="switchTab('timer',this)"><i class="bi bi-stopwatch"></i>Timer</a>
-  <a id="nav-projects"  onclick="switchTab('projects',this)"><i class="bi bi-folder2-open"></i>Projects</a>
-  <a id="nav-dashboard" onclick="switchTab('dashboard',this)"><i class="bi bi-bar-chart-line"></i>Dashboard</a>
-  <a id="nav-settings"  onclick="switchTab('settings',this)"><i class="bi bi-sliders"></i>Settings</a>
-</div>
+<!-- ════════════════════════════════════════════════════════════════
+     MAIN APP
+════════════════════════════════════════════════════════════════ -->
+<div id="appShell" class="d-none">
 
-<div class="content">
-
-  <!-- ════════ TIMER TAB ════════ -->
-  <div id="tab-timer">
-    <!-- active timer slots -->
-    <div class="row g-3 mb-3" id="timerSlots"></div>
-
-    <!-- add timer -->
-    <div class="add-timer-area mb-4" onclick="addTimerSlot()">
-      <i class="bi bi-plus-circle" style="font-size:1.8rem;display:block;margin-bottom:.4rem"></i>
-      <span class="fw-semibold">Add Timer</span>
-      <div style="font-size:.8rem;margin-top:.2rem;opacity:.7">Track a new project simultaneously</div>
+  <!-- HEADER -->
+  <div class="app-hdr">
+    <div>
+      <h5><i class="bi bi-lightning-charge-fill me-1"></i>PSS Time Tracker</h5>
+      <small id="hdrDate"></small>
     </div>
-
-    <!-- today sessions -->
-    <div class="d-flex justify-content-between align-items-center mb-2">
-      <div style="font-weight:700;font-size:.95rem"><i class="bi bi-list-check text-primary me-1"></i>Today's Sessions</div>
-      <div class="d-flex gap-2 align-items-center">
-        <span class="badge bg-primary rounded-pill" id="todayTotal">0h 0m</span>
-        <button class="btn btn-sm btn-outline-primary rounded-pill" onclick="openManualEntry()"><i class="bi bi-plus-lg me-1"></i>Add Manual</button>
-      </div>
-    </div>
-    <div id="todayList"></div>
-  </div>
-
-  <!-- ════════ PROJECTS TAB ════════ -->
-  <div id="tab-projects" class="d-none">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-      <div style="font-weight:700;font-size:.95rem"><i class="bi bi-folder2-open text-primary me-1"></i>Projects</div>
-      <button class="btn btn-primary rounded-pill btn-sm px-3" onclick="openProjectModal()"><i class="bi bi-plus-lg me-1"></i>Add Project</button>
-    </div>
-    <div class="chart-card mb-3 py-2">
-      <div class="row g-2">
-        <div class="col-md-5"><input type="text" class="form-control form-control-sm" id="projSearch" placeholder="Search…" oninput="renderProjects()"></div>
-        <div class="col-md-3"><select class="form-select form-select-sm" id="projSF" onchange="renderProjects()"><option value="">All Statuses</option></select></div>
-        <div class="col-md-3"><select class="form-select form-select-sm" id="projCF" onchange="renderProjects()"><option value="">All Categories</option></select></div>
-      </div>
-    </div>
-    <div id="projList"></div>
-  </div>
-
-  <!-- ════════ DASHBOARD TAB ════════ -->
-  <div id="tab-dashboard" class="d-none">
-    <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
-      <div class="btn-group btn-group-sm">
-        <button class="btn btn-primary"        id="btnDay"   onclick="setDashView('day')">Daily</button>
-        <button class="btn btn-outline-primary" id="btnMonth" onclick="setDashView('month')">Monthly</button>
-      </div>
-      <input type="date"  class="form-control form-control-sm" id="dashDate"  style="max-width:155px" onchange="renderDashboard()">
-      <input type="month" class="form-control form-control-sm d-none" id="dashMonth" style="max-width:155px" onchange="renderDashboard()">
-    </div>
-    <div class="row g-3 mb-3" id="kpiCards"></div>
-    <div class="row g-3 mb-3">
-      <div class="col-lg-8"><div class="chart-card"><h6><i class="bi bi-bar-chart me-1"></i>Hours by Project</h6><canvas id="barChart" height="220"></canvas></div></div>
-      <div class="col-lg-4"><div class="chart-card"><h6><i class="bi bi-pie-chart me-1"></i>Distribution</h6><canvas id="dnutChart" height="220"></canvas></div></div>
-    </div>
-    <div id="dailySect" class="d-none mb-3">
-      <div class="chart-card"><h6><i class="bi bi-calendar3 me-1"></i>Daily Hours (Month)</h6><canvas id="dailyChart" height="160"></canvas></div>
-    </div>
-    <div class="chart-card">
-      <h6><i class="bi bi-table me-1"></i>Project Summary</h6>
-      <div class="table-responsive">
-        <table class="table tbl table-bordered table-sm mb-0">
-          <thead><tr><th>Proj #</th><th>Name</th><th>Category</th><th>Status</th><th>Value (₹)</th><th>Planned h</th><th>Actual h</th><th>Remaining h</th><th>Progress</th><th>Start</th><th>End</th></tr></thead>
-          <tbody id="summaryBody"></tbody>
-        </table>
-      </div>
+    <div class="d-flex align-items-center gap-2">
+      <span class="sync-dot" id="syncDot" title="Connected"></span>
+      <span class="user-badge" id="userBadge" onclick="doSignOut()">
+        <i class="bi bi-person-circle me-1"></i><span id="userNameDisplay"></span>
+        &nbsp;<i class="bi bi-box-arrow-right" title="Sign out"></i>
+      </span>
     </div>
   </div>
 
-  <!-- ════════ SETTINGS TAB ════════ -->
-  <div id="tab-settings" class="d-none">
-    <div class="row g-3">
-      <div class="col-md-6">
-        <div class="chart-card">
-          <h6><i class="bi bi-tag me-1"></i>Project Statuses</h6>
-          <div id="statusTags" class="mb-3" style="min-height:48px"></div>
-          <div class="input-group input-group-sm">
-            <input type="text" class="form-control" id="newStatus" placeholder="Add new status…" onkeydown="if(event.key==='Enter')addStatus()">
-            <button class="btn btn-primary" onclick="addStatus()"><i class="bi bi-plus-lg"></i></button>
+  <!-- NAV -->
+  <div class="nav-bar">
+    <a onclick="showPage('timer')"    id="nav-timer">   <i class="bi bi-stopwatch-fill"></i>Timer</a>
+    <a onclick="showPage('projects')" id="nav-projects"><i class="bi bi-folder2-open"></i>Projects</a>
+    <a onclick="showPage('sessions')" id="nav-sessions"><i class="bi bi-clock-history"></i>Log</a>
+    <a onclick="showPage('dashboard')"id="nav-dashboard"><i class="bi bi-bar-chart-fill"></i>Dashboard</a>
+    <a onclick="showPage('settings')" id="nav-settings"><i class="bi bi-gear-fill"></i>Settings</a>
+  </div>
+
+  <div class="content">
+    <div id="setupBanner">
+      <strong><i class="bi bi-exclamation-triangle-fill me-1 text-warning"></i>Firebase not configured.</strong>
+      Running in offline mode — data is not synced. Open index.html, fill in your <code>firebaseConfig</code>, and redeploy.
+    </div>
+
+    <!-- ── TIMER PAGE ─────────────────────────────────────────── -->
+    <div id="page-timer" class="d-none">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0 fw-bold">Active Timers</h5>
+        <button class="btn btn-primary btn-sm" onclick="addSlot()">
+          <i class="bi bi-plus-lg me-1"></i>Add Timer
+        </button>
+      </div>
+      <div id="slotsContainer" class="d-flex flex-column gap-3"></div>
+      <p id="noSlots" class="text-center text-muted mt-4 d-none">
+        <i class="bi bi-stopwatch" style="font-size:2rem;opacity:.3;display:block;margin-bottom:.5rem"></i>
+        No active timers. Click <strong>Add Timer</strong> to start.
+      </p>
+    </div>
+
+    <!-- ── PROJECTS PAGE ──────────────────────────────────────── -->
+    <div id="page-projects" class="d-none">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0 fw-bold">Projects</h5>
+        <button class="btn btn-primary btn-sm" onclick="openAddProject()">
+          <i class="bi bi-plus-lg me-1"></i>Add Project
+        </button>
+      </div>
+      <div id="projectsList" class="d-flex flex-column gap-3"></div>
+      <p id="noProjMsg" class="text-center text-muted mt-4 d-none">
+        <i class="bi bi-folder2" style="font-size:2rem;opacity:.3;display:block;margin-bottom:.5rem"></i>
+        No projects yet. Add your first project.
+      </p>
+    </div>
+
+    <!-- ── SESSION LOG PAGE ───────────────────────────────────── -->
+    <div id="page-sessions" class="d-none">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0 fw-bold">Session Log</h5>
+        <div class="d-flex gap-2 align-items-center">
+          <input type="date" id="logDate" class="form-control form-control-sm" style="width:160px"
+            onchange="renderSessionLog()">
+          <div class="btn-group btn-group-sm" role="group">
+            <button class="btn btn-outline-primary active" id="logViewAll" onclick="setLogView('all')">All</button>
+            <button class="btn btn-outline-primary" id="logViewMe"  onclick="setLogView('me')">Mine</button>
           </div>
         </div>
       </div>
-      <div class="col-md-6">
-        <div class="chart-card">
-          <h6><i class="bi bi-grid-3x3-gap me-1"></i>Study Categories</h6>
-          <div id="catTags" class="mb-3" style="min-height:48px"></div>
-          <div class="input-group input-group-sm">
-            <input type="text" class="form-control" id="newCat" placeholder="Add new category…" onkeydown="if(event.key==='Enter')addCategory()">
-            <button class="btn btn-primary" onclick="addCategory()"><i class="bi bi-plus-lg"></i></button>
+      <div id="sessionLog" class="d-flex flex-column gap-2"></div>
+      <p id="noSessMsg" class="text-center text-muted mt-4 d-none">No sessions for this date.</p>
+    </div>
+
+    <!-- ── DASHBOARD PAGE ─────────────────────────────────────── -->
+    <div id="page-dashboard" class="d-none">
+      <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
+        <h5 class="mb-0 fw-bold">Dashboard</h5>
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+          <div class="btn-group btn-group-sm" role="group">
+            <button class="btn btn-outline-primary active" id="dashViewAll" onclick="setDashView('all')">
+              <i class="bi bi-people-fill me-1"></i>All Team
+            </button>
+            <button class="btn btn-outline-primary" id="dashViewMe" onclick="setDashView('me')">
+              <i class="bi bi-person-fill me-1"></i>My Time
+            </button>
+          </div>
+          <select id="dashPeriod" class="form-select form-select-sm" style="width:auto" onchange="renderDashboard()">
+            <option value="today">Today</option>
+            <option value="week">This Week</option>
+            <option value="month" selected>This Month</option>
+          </select>
+          <select id="dashYear" class="form-select form-select-sm" style="width:auto" onchange="renderDashboard()"></select>
+          <select id="dashMonth" class="form-select form-select-sm" style="width:auto" onchange="renderDashboard()"></select>
+        </div>
+      </div>
+
+      <!-- stat cards -->
+      <div class="row g-3 mb-3">
+        <div class="col-6 col-md-3">
+          <div class="stat-card">
+            <div class="val" id="dTotalHours">0h</div>
+            <div class="lbl">Total Hours</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="stat-card" style="border-top-color:var(--success)">
+            <div class="val" id="dActiveProjCount">0</div>
+            <div class="lbl">Active Projects</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="stat-card" style="border-top-color:var(--warning)">
+            <div class="val" id="dSessionCount">0</div>
+            <div class="lbl">Sessions</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="stat-card" style="border-top-color:var(--danger)">
+            <div class="val" id="dAvgSession">0h</div>
+            <div class="lbl">Avg Session</div>
           </div>
         </div>
       </div>
-      <div class="col-12">
-        <div class="chart-card">
-          <h6><i class="bi bi-database me-1"></i>Data Management</h6>
-          <div class="d-flex gap-2 flex-wrap">
-            <button class="btn btn-sm btn-outline-primary" onclick="exportJSON()"><i class="bi bi-download me-1"></i>Export JSON</button>
-            <button class="btn btn-sm btn-outline-success" onclick="exportCSV()"><i class="bi bi-file-spreadsheet me-1"></i>Export CSV</button>
-            <button class="btn btn-sm btn-outline-danger"  onclick="clearAll()"><i class="bi bi-trash me-1"></i>Clear All Data</button>
-          </div>
+
+      <div class="row g-3 mb-3">
+        <div class="col-md-7">
+          <div class="chart-wrap"><canvas id="barChart" height="220"></canvas></div>
+        </div>
+        <div class="col-md-5">
+          <div class="chart-wrap"><canvas id="pieChart" height="220"></canvas></div>
+        </div>
+      </div>
+
+      <!-- project summary table -->
+      <div class="chart-wrap">
+        <h6 class="fw-semibold mb-3">Project Breakdown</h6>
+        <div class="table-responsive">
+          <table class="table table-sm table-hover align-middle mb-0" id="summaryTable">
+            <thead class="table-light">
+              <tr>
+                <th>Project</th>
+                <th>Hours</th>
+                <th>Sessions</th>
+                <th>Team</th>
+                <th>Progress</th>
+              </tr>
+            </thead>
+            <tbody id="summaryBody"></tbody>
+          </table>
         </div>
       </div>
     </div>
-  </div>
 
-</div><!-- /content -->
+    <!-- ── SETTINGS PAGE ──────────────────────────────────────── -->
+    <div id="page-settings" class="d-none">
+      <h5 class="mb-3 fw-bold">Settings</h5>
 
-<!-- PROJECT MODAL -->
-<div class="modal fade" id="projectModal" tabindex="-1" data-bs-backdrop="static">
+      <div class="setting-section">
+        <h6><i class="bi bi-building me-1"></i>Company Info</h6>
+        <div class="row g-2">
+          <div class="col-md-6">
+            <label class="form-label">Company Name</label>
+            <input type="text" id="setCompany" class="form-control" placeholder="PSS Engineering">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Currency Symbol</label>
+            <input type="text" id="setCurrency" class="form-control" placeholder="₹" maxlength="4">
+          </div>
+        </div>
+      </div>
+
+      <div class="setting-section">
+        <h6><i class="bi bi-list-ul me-1"></i>Dropdown Options</h6>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Project Types</label>
+            <div id="listProjectTypes" class="mb-2"></div>
+            <div class="input-group input-group-sm">
+              <input type="text" id="newProjectType" class="form-control" placeholder="Add type">
+              <button class="btn btn-outline-primary" onclick="addListItem('projectTypes','newProjectType')">
+                <i class="bi bi-plus-lg"></i>
+              </button>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Status Options</label>
+            <div id="listStatusOptions" class="mb-2"></div>
+            <div class="input-group input-group-sm">
+              <input type="text" id="newStatus" class="form-control" placeholder="Add status">
+              <button class="btn btn-outline-primary" onclick="addListItem('statusOptions','newStatus')">
+                <i class="bi bi-plus-lg"></i>
+              </button>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Work Categories</label>
+            <div id="listWorkCategories" class="mb-2"></div>
+            <div class="input-group input-group-sm">
+              <input type="text" id="newWorkCat" class="form-control" placeholder="Add category">
+              <button class="btn btn-outline-primary" onclick="addListItem('workCategories','newWorkCat')">
+                <i class="bi bi-plus-lg"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <button class="btn btn-primary px-4" onclick="saveSettings()">
+        <i class="bi bi-cloud-upload me-1"></i>Save Settings
+      </button>
+    </div>
+  </div><!-- /content -->
+</div><!-- /appShell -->
+
+<!-- ════════════════════════════════════════════════════════════════
+     MODALS
+════════════════════════════════════════════════════════════════ -->
+
+<!-- Add / Edit Project Modal -->
+<div class="modal fade" id="projectModal" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="projModalTitle">Add Project</h5>
-        <button type="button" class="btn-close" id="projModalClose"></button>
+      <div class="modal-header" style="background:linear-gradient(135deg,var(--primary),var(--pl));color:white">
+        <h5 class="modal-title fw-bold" id="projModalTitle">Add Project</h5>
+        <button type="button" class="btn-close btn-close-white" id="projModalClose"></button>
       </div>
       <div class="modal-body">
+        <input type="hidden" id="editProjId">
         <div class="row g-3">
-          <div class="col-md-4"><label class="form-label fw-semibold">Project Number <span class="text-danger">*</span></label><input type="text" class="form-control" id="pNum" placeholder="e.g. PSS-2024-001"></div>
-          <div class="col-md-8"><label class="form-label fw-semibold">Project Name <span class="text-danger">*</span></label><input type="text" class="form-control" id="pName" placeholder="Project name"></div>
-          <div class="col-md-4"><label class="form-label fw-semibold">Project Value (₹)</label><input type="number" class="form-control" id="pValue" placeholder="0" min="0"></div>
-          <div class="col-md-4"><label class="form-label fw-semibold">Planned Hours</label><input type="number" class="form-control" id="pPlanned" placeholder="0" min="0" step="0.5"></div>
-          <div class="col-md-4"><label class="form-label fw-semibold">Category</label><select class="form-select" id="pCat"></select></div>
-          <div class="col-md-4"><label class="form-label fw-semibold">Status</label><select class="form-select" id="pStatus"></select></div>
-          <div class="col-md-4"><label class="form-label fw-semibold">Start Date</label><input type="date" class="form-control" id="pStart"></div>
-          <div class="col-md-4"><label class="form-label fw-semibold">End Date</label><input type="date" class="form-control" id="pEnd"></div>
-          <div class="col-12"><label class="form-label fw-semibold">Client / Description</label><textarea class="form-control" id="pDesc" rows="2" placeholder="Client name, scope, or notes…"></textarea></div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Project Number *</label>
+            <input type="text" id="projNum" class="form-control" placeholder="PSS-001">
+          </div>
+          <div class="col-md-8">
+            <label class="form-label fw-semibold">Project Name *</label>
+            <input type="text" id="projName" class="form-control" placeholder="Project name">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Project Value</label>
+            <div class="input-group">
+              <span class="input-group-text" id="currPrefix">₹</span>
+              <input type="number" id="projValue" class="form-control" placeholder="0">
+            </div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Planned Hours</label>
+            <input type="number" id="projHours" class="form-control" placeholder="0">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Status</label>
+            <select id="projStatus" class="form-select"></select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Project Type</label>
+            <select id="projType" class="form-select"></select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Start Date</label>
+            <input type="date" id="projStart" class="form-control">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">End Date</label>
+            <input type="date" id="projEnd" class="form-control">
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">Client / Description</label>
+            <textarea id="projDesc" class="form-control" rows="2" placeholder="Client name or brief description"></textarea>
+          </div>
         </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" id="projCancelBtn">Cancel</button>
-        <button class="btn btn-primary" onclick="saveProject()"><i class="bi bi-check-lg me-1"></i>Save Project</button>
+        <button class="btn btn-primary" onclick="saveProject()">
+          <i class="bi bi-check-lg me-1"></i>Save Project
+        </button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- SESSION MODAL -->
-<div class="modal fade" id="sessionModal" tabindex="-1" data-bs-backdrop="static">
+<!-- Add Timer Slot Modal -->
+<div class="modal fade" id="sessionModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="sessModalTitle">Session</h5>
-        <button type="button" class="btn-close" id="sessModalClose"></button>
+      <div class="modal-header" style="background:linear-gradient(135deg,var(--primary),var(--pl));color:white">
+        <h5 class="modal-title fw-bold">Select Project</h5>
+        <button type="button" class="btn-close btn-close-white" id="sessModalClose"></button>
       </div>
       <div class="modal-body">
-        <div class="mb-3"><label class="form-label fw-semibold">Project</label><select class="form-select" id="sProject"></select></div>
-        <div class="row g-3 mb-3">
-          <div class="col-6"><label class="form-label fw-semibold">Start</label><input type="datetime-local" class="form-control" id="sStart"></div>
-          <div class="col-6"><label class="form-label fw-semibold">End</label><input type="datetime-local" class="form-control" id="sEnd"></div>
-        </div>
-        <div><label class="form-label fw-semibold">Notes</label><textarea class="form-control" id="sNotes" rows="2" placeholder="What did you work on?"></textarea></div>
+        <label class="form-label fw-semibold">Project</label>
+        <select id="slotProject" class="form-select mb-3"></select>
+        <label class="form-label fw-semibold">Work Category</label>
+        <select id="slotCategory" class="form-select"></select>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" id="sessCancelBtn">Cancel</button>
-        <button class="btn btn-primary" onclick="saveSession()"><i class="bi bi-check-lg me-1"></i>Save</button>
+        <button class="btn btn-primary" onclick="confirmAddSlot()">
+          <i class="bi bi-plus-lg me-1"></i>Add Timer
+        </button>
       </div>
     </div>
   </div>
 </div>
 
+<!-- Stop + Notes Modal -->
+<div class="modal fade" id="stopNotesModal" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header notes-modal-header">
+        <h5 class="modal-title fw-bold"><i class="bi bi-journal-text me-1"></i>Work Summary</h5>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div>
+            <div class="fw-semibold" id="stopProjName">Project</div>
+            <div class="text-muted" style="font-size:.85rem" id="stopCategory"></div>
+          </div>
+          <div class="text-end">
+            <div class="fw-bold text-primary" style="font-size:1.4rem" id="stopDuration">00:00:00</div>
+            <div class="text-muted" style="font-size:.78rem">duration</div>
+          </div>
+        </div>
+        <label class="form-label fw-semibold">Notes / Work Done <span class="text-muted fw-normal">(optional)</span></label>
+        <textarea id="stopNotes" class="form-control" rows="4"
+          placeholder="Brief description of work completed in this session…"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary btn-sm" onclick="saveStop(true)">
+          <i class="bi bi-skip-forward me-1"></i>Skip Notes
+        </button>
+        <button class="btn btn-success" onclick="saveStop(false)">
+          <i class="bi bi-check-circle me-1"></i>Save Session
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     BOOTSTRAP JS
+════════════════════════════════════════════════════════════════ -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
 <script>
-// ══════════════════════════════════════════════════════
-//  STATE
-// ══════════════════════════════════════════════════════
-const DEFS = {
-  projects:[], sessions:[],
-  activeTimers:[],   // ← multi-timer slots
-  settings:{
-    statuses:['Planning','In Progress','On Hold','Completed','Cancelled'],
-    categories:['Load Flow','Short Circuit','Arc Flash','Harmonic Analysis',
-                'Protection Coordination','Cable Sizing','Motor Starting','Misc']
+/* ═══════════════════════════════════════════════════════════════
+   FIREBASE CONFIG  ← Paste your config here
+═══════════════════════════════════════════════════════════════ */
+const firebaseConfig = {
+  apiKey:            "AIzaSyDlLO3ja4S-ZYJ5jm9c4uK_ihYcD5FSuag",
+  authDomain:        "pss-time-tracker.firebaseapp.com",
+  projectId:         "pss-time-tracker",
+  storageBucket:     "pss-time-tracker.firebasestorage.app",
+  messagingSenderId: "899086832979",
+  appId:             "1:899086832979:web:4c11f161134c2af9e97da6",
+  measurementId:     "G-K60Q52TLKP"
+};
+const CONFIGURED = firebaseConfig.apiKey !== 'YOUR_API_KEY';
+
+/* ── Firebase init ─────────────────────────────────────────── */
+let auth, db;
+if (CONFIGURED) {
+  firebase.initializeApp(firebaseConfig);
+  auth = firebase.auth();
+  db   = firebase.firestore();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   APP STATE
+═══════════════════════════════════════════════════════════════ */
+const LS_KEY = 'pss_timers_v5';  // active timers (per device)
+
+let currentUser    = null;
+let currentUserName= '';
+let unsubProj      = null;
+let unsubSess      = null;
+let unsubCfg       = null;
+
+// State that comes from Firestore
+let S = {
+  projects     : [],
+  sessions     : [],         // all sessions loaded for current log/dash query
+  settings     : {
+    company        : 'PSS Engineering',
+    currency       : '₹',
+    projectTypes   : ['Load Flow','Short Circuit','Protection','Arc Flash','Harmonics','Other'],
+    statusOptions  : ['Active','On Hold','Completed','Cancelled'],
+    workCategories : ['Modelling','Analysis','Report','Meeting','Review','Admin']
   }
 };
-let S = clone(DEFS);
-let masterIv = null;   // single interval for ALL timers
-let editProjId=null, editSessId=null, dashView='day';
-let barChart=null, dnutChart=null, dailyChart=null;
-let projModal=null, sessModal=null;
 
-function clone(o){return JSON.parse(JSON.stringify(o))}
+// Active timers — local only (per device)
+let activeTimers = loadTimers();
+let masterIv     = null;
+let pendingStop  = null;  // {slotId, totalSecs, projectId, startISO, category}
 
-// ══════════════════════════════════════════════════════
-//  PERSIST
-// ══════════════════════════════════════════════════════
-function save(){
-  localStorage.setItem('pss_v4',JSON.stringify({
-    projects:S.projects, sessions:S.sessions,
-    activeTimers:S.activeTimers, settings:S.settings
-  }));
-}
-function load(){
-  try{
-    const r=localStorage.getItem('pss_v4');
-    if(!r)return;
-    const d=JSON.parse(r);
-    S.projects     = d.projects     ||[];
-    S.sessions     = d.sessions     ||[];
-    S.activeTimers = d.activeTimers ||[];
-    S.settings     = Object.assign(clone(DEFS.settings), d.settings||{});
-  }catch(e){console.error(e)}
-}
+let dashUserView = 'all';
+let logUserView  = 'all';
+let barChart     = null;
+let pieChart     = null;
 
-// ══════════════════════════════════════════════════════
-//  CLOCK
-// ══════════════════════════════════════════════════════
-function tick(){
-  const n=new Date();
-  document.getElementById('liveClock').textContent=
-    n.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-  document.getElementById('liveDate').textContent=
-    n.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
+// Bootstrap modal instances
+let projModal, sessModal, stopModal;
+
+/* ═══════════════════════════════════════════════════════════════
+   LOCAL STORAGE HELPERS
+═══════════════════════════════════════════════════════════════ */
+function loadTimers(){ try{return JSON.parse(localStorage.getItem(LS_KEY)||'[]')}catch{return[]} }
+function saveTimers(){ localStorage.setItem(LS_KEY, JSON.stringify(activeTimers)) }
+
+/* ═══════════════════════════════════════════════════════════════
+   AUTH
+═══════════════════════════════════════════════════════════════ */
+let authTab = 'signin';
+
+function showTab(tab){
+  authTab = tab;
+  document.getElementById('nameRow').style.display = tab==='signup'?'block':'none';
+  document.getElementById('tabSignin').className  = tab==='signin' ? 'btn btn-primary flex-fill me-1' : 'btn btn-outline-primary flex-fill me-1';
+  document.getElementById('tabSignup').className  = tab==='signup' ? 'btn btn-primary flex-fill ms-1' : 'btn btn-outline-primary flex-fill ms-1';
+  document.getElementById('authBtn').textContent  = tab==='signin' ? 'Sign In' : 'Create Account';
+  document.getElementById('authError').classList.add('d-none');
 }
 
-// ══════════════════════════════════════════════════════
-//  TABS
-// ══════════════════════════════════════════════════════
-function switchTab(tab,el){
-  ['timer','projects','dashboard','settings'].forEach(t=>
-    document.getElementById('tab-'+t).classList.toggle('d-none',t!==tab));
-  document.querySelectorAll('.nav-bar a').forEach(a=>a.classList.remove('active'));
-  el.classList.add('active');
-  if(tab==='dashboard')setTimeout(renderDashboard,60);
-  if(tab==='projects') renderProjects();
-  if(tab==='settings') renderSettings();
+function showAuthError(msg){
+  const el = document.getElementById('authError');
+  el.textContent = msg;
+  el.classList.remove('d-none');
 }
 
-// ══════════════════════════════════════════════════════
-//  MULTI-TIMER CORE
-// ══════════════════════════════════════════════════════
+async function authSubmit(){
+  if (!CONFIGURED) { enterOfflineMode(); return; }
+  const email = document.getElementById('authEmail').value.trim();
+  const pwd   = document.getElementById('authPassword').value;
+  const name  = document.getElementById('authName').value.trim();
+  document.getElementById('authError').classList.add('d-none');
+  try {
+    if (authTab === 'signup') {
+      if (!name) { showAuthError('Please enter your name.'); return; }
+      const cred = await auth.createUserWithEmailAndPassword(email, pwd);
+      await cred.user.updateProfile({ displayName: name });
+    } else {
+      await auth.signInWithEmailAndPassword(email, pwd);
+    }
+  } catch(e) {
+    showAuthError(friendlyAuthError(e.code));
+  }
+}
 
-/** Current elapsed seconds for a timer object */
+function friendlyAuthError(code){
+  const map = {
+    'auth/email-already-in-use': 'That email is already registered. Try signing in.',
+    'auth/invalid-email'        : 'Invalid email address.',
+    'auth/user-not-found'       : 'No account found with this email.',
+    'auth/wrong-password'       : 'Incorrect password.',
+    'auth/weak-password'        : 'Password must be at least 6 characters.',
+    'auth/too-many-requests'    : 'Too many attempts. Please try again later.',
+  };
+  return map[code] || 'Authentication error. Please try again.';
+}
+
+async function forgotPwd(){
+  const email = document.getElementById('authEmail').value.trim();
+  if (!email) { showAuthError('Enter your email first.'); return; }
+  try {
+    await auth.sendPasswordResetEmail(email);
+    showAuthError('Password reset email sent! Check your inbox.');
+    document.getElementById('authError').classList.remove('d-none');
+    document.getElementById('authError').classList.replace('alert-danger','alert-success');
+  } catch(e){
+    showAuthError(e.message);
+  }
+}
+
+function doSignOut(){
+  if (!confirm('Sign out?')) return;
+  teardownListeners();
+  if (auth) auth.signOut();
+  currentUser = null;
+  document.getElementById('appShell').classList.add('d-none');
+  document.getElementById('authOverlay').classList.remove('d-none');
+}
+
+/* ── offline mode (Firebase not configured) ─────────────────── */
+function enterOfflineMode(){
+  currentUser     = { uid: 'offline', displayName: 'Me' };
+  currentUserName = 'Me';
+  onUserReady();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   FIRESTORE LISTENERS
+═══════════════════════════════════════════════════════════════ */
+function setupListeners(){
+  if (!CONFIGURED || !db) return;
+
+  // Projects — real-time
+  unsubProj = db.collection('projects').orderBy('createdAt').onSnapshot(snap=>{
+    S.projects = snap.docs.map(d=>({id:d.id,...d.data()}));
+    renderProjects();
+    renderSlots();
+    populateProjectDropdowns();
+  }, err=>console.warn('proj listener',err));
+
+  // Settings
+  unsubCfg = db.collection('settings').doc('main').onSnapshot(doc=>{
+    if (doc.exists) S.settings = { ...S.settings, ...doc.data() };
+    renderSettingsUI();
+    renderSlots();
+    populateProjectDropdowns();
+  }, err=>console.warn('cfg listener',err));
+
+  setSyncStatus(true);
+}
+
+function teardownListeners(){
+  if (unsubProj) { unsubProj(); unsubProj=null; }
+  if (unsubSess) { unsubSess(); unsubSess=null; }
+  if (unsubCfg)  { unsubCfg();  unsubCfg=null;  }
+}
+
+function setSyncStatus(online){
+  const dot = document.getElementById('syncDot');
+  if (online){ dot.classList.remove('offline'); dot.title='Synced'; }
+  else       { dot.classList.add('offline');    dot.title='Offline'; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BOOT
+═══════════════════════════════════════════════════════════════ */
+window.addEventListener('DOMContentLoaded', ()=>{
+  // Bootstrap modals — create once
+  projModal = new bootstrap.Modal(document.getElementById('projectModal'));
+  sessModal = new bootstrap.Modal(document.getElementById('sessionModal'));
+  stopModal = new bootstrap.Modal(document.getElementById('stopNotesModal'));
+
+  document.getElementById('projModalClose').onclick = ()=>projModal.hide();
+  document.getElementById('projCancelBtn').onclick  = ()=>projModal.hide();
+  document.getElementById('sessModalClose').onclick = ()=>sessModal.hide();
+  document.getElementById('sessCancelBtn').onclick  = ()=>sessModal.hide();
+
+  // Date header
+  document.getElementById('hdrDate').textContent = new Date().toLocaleDateString('en-IN',
+    {weekday:'short',day:'numeric',month:'short',year:'numeric'});
+
+  // Log date default = today
+  document.getElementById('logDate').value = todayStr();
+
+  // Dashboard year/month selectors
+  const y = document.getElementById('dashYear');
+  const m = document.getElementById('dashMonth');
+  const now = new Date();
+  for(let i=now.getFullYear(); i>=now.getFullYear()-3; i--){
+    const o=document.createElement('option');
+    o.value=i; o.textContent=i;
+    if(i===now.getFullYear()) o.selected=true;
+    y.appendChild(o);
+  }
+  ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].forEach((mn,i)=>{
+    const o=document.createElement('option');
+    o.value=i; o.textContent=mn;
+    if(i===now.getMonth()) o.selected=true;
+    m.appendChild(o);
+  });
+
+  if (!CONFIGURED) {
+    // Skip auth — enter offline mode immediately
+    document.getElementById('authOverlay').classList.add('d-none');
+    enterOfflineMode();
+    return;
+  }
+
+  // Firebase auth state
+  auth.onAuthStateChanged(user=>{
+    if (user) {
+      currentUser     = user;
+      currentUserName = user.displayName || user.email.split('@')[0];
+      onUserReady();
+    } else {
+      teardownListeners();
+      document.getElementById('appShell').classList.add('d-none');
+      document.getElementById('authOverlay').classList.remove('d-none');
+    }
+  });
+});
+
+function onUserReady(){
+  document.getElementById('authOverlay').classList.add('d-none');
+  document.getElementById('appShell').classList.remove('d-none');
+  document.getElementById('userNameDisplay').textContent = currentUserName;
+
+  if (!CONFIGURED) {
+    document.getElementById('setupBanner').style.display = 'block';
+    setSyncStatus(false);
+  }
+
+  setupListeners();
+  restoreTimers();
+  showPage('timer');
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   NAVIGATION
+═══════════════════════════════════════════════════════════════ */
+function showPage(page){
+  ['timer','projects','sessions','dashboard','settings'].forEach(p=>{
+    document.getElementById('page-'+p).classList.add('d-none');
+    document.getElementById('nav-'+p).classList.remove('active');
+  });
+  document.getElementById('page-'+page).classList.remove('d-none');
+  document.getElementById('nav-'+page).classList.add('active');
+
+  if (page==='projects')  renderProjects();
+  if (page==='sessions')  renderSessionLog();
+  if (page==='dashboard') renderDashboard();
+  if (page==='settings')  renderSettingsUI();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TIMER LOGIC
+═══════════════════════════════════════════════════════════════ */
+function todayStr(){ return new Date().toISOString().slice(0,10) }
+
+function secsToHMS(s){
+  s=Math.max(0,Math.floor(s));
+  const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sc=s%60;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sc).padStart(2,'0')}`;
+}
+
 function getElapsed(t){
   let el = t.elapsed||0;
-  if(t.state==='running' && t.lastStart){
-    el += Math.floor((Date.now()-t.lastStart)/1000);
-  }
-  return el;
-}
-
-/** Master tick: update display of all running timers */
-function tickAll(){
-  S.activeTimers.forEach(t=>{
-    if(t.state!=='running')return;
-    const el=document.getElementById('td-'+t.id);
-    if(el)el.textContent=secsToHMS(getElapsed(t));
-  });
+  if (t.state==='running' && t.lastStart) el += (Date.now()-t.lastStart)/1000;
+  return Math.floor(el);
 }
 
 function startMasterTick(){
-  if(masterIv)return;
-  masterIv=setInterval(tickAll,1000);
-}
-function checkStopMaster(){
-  if(S.activeTimers.some(t=>t.state==='running'))return;
-  if(masterIv){clearInterval(masterIv);masterIv=null;}
+  if (masterIv) return;
+  masterIv = setInterval(tickAll, 1000);
 }
 
-// ── slot actions ──────────────────────────────────────
-function addTimerSlot(){
-  const t={
-    id:String(Date.now()),
-    projectId:null, state:'stopped',
-    elapsed:0, lastStart:null, sessionStart:null
-  };
-  S.activeTimers.push(t);
-  save();
+function stopMasterTick(){
+  if (!masterIv) return;
+  clearInterval(masterIv); masterIv=null;
+}
+
+function checkStopMaster(){
+  const anyRunning = activeTimers.some(t=>t.state==='running');
+  if (!anyRunning) stopMasterTick();
+}
+
+function tickAll(){
+  activeTimers.forEach(t=>{
+    if (t.state!=='running') return;
+    const el = document.getElementById('td-'+t.id);
+    if (el) el.textContent = secsToHMS(getElapsed(t));
+  });
+}
+
+function restoreTimers(){
+  if (!activeTimers.length) { renderSlots(); return; }
+  // Re-attach lastStart to now for any that were running on page reload
+  activeTimers.forEach(t=>{
+    if (t.state==='running') t.lastStart = Date.now();
+  });
+  saveTimers();
+  if (activeTimers.some(t=>t.state==='running')) startMasterTick();
   renderSlots();
 }
 
-function removeSlot(id){
-  const t=S.activeTimers.find(x=>x.id===id);
-  if(!t||t.state!=='stopped'){alert('Stop the timer before removing.');return}
-  S.activeTimers=S.activeTimers.filter(x=>x.id!==id);
-  save(); renderSlots();
+function addSlot(){
+  if (!S.projects.length){ alert('Add a project first.'); showPage('projects'); return; }
+  populateProjectDropdowns();
+  sessModal.show();
 }
 
-function setSlotProject(id, projId){
-  const t=S.activeTimers.find(x=>x.id===id);
-  if(!t)return;
-  t.projectId=projId||null;
-  save();
-  // update project label and enable/disable start
-  const p=S.projects.find(x=>x.id===projId);
-  const lbl=document.getElementById('pl-'+id);
-  if(lbl)lbl.textContent=p?`${p.number} — ${p.name}`:'No project selected';
-  const btn=document.querySelector(`#slot-${id} .s-start`);
-  if(btn)btn.disabled=!projId;
+function confirmAddSlot(){
+  const pid = document.getElementById('slotProject').value;
+  const cat = document.getElementById('slotCategory').value;
+  if (!pid) return;
+  const id = Date.now().toString();
+  activeTimers.push({ id, projectId:pid, category:cat, state:'stopped', elapsed:0, lastStart:null, sessionStart:null });
+  saveTimers();
+  renderSlots();
+  sessModal.hide();
+}
+
+function renderSlots(){
+  const cont = document.getElementById('slotsContainer');
+  const noSl = document.getElementById('noSlots');
+
+  if (!activeTimers.length){
+    cont.innerHTML=''; noSl.classList.remove('d-none'); return;
+  }
+  noSl.classList.add('d-none');
+
+  // update or create slots
+  const existingIds = [...cont.querySelectorAll('.timer-slot')].map(el=>el.dataset.id);
+  const currentIds  = activeTimers.map(t=>t.id);
+
+  // remove deleted
+  existingIds.forEach(id=>{ if(!currentIds.includes(id)) document.getElementById('slot-'+id)?.remove(); });
+
+  activeTimers.forEach(t=>{
+    const proj = S.projects.find(p=>p.id===t.projectId);
+    const projName = proj ? `${proj.num} – ${proj.name}` : 'Unknown Project';
+    const projNum  = proj ? proj.num : '';
+    const elapsed  = secsToHMS(getElapsed(t));
+
+    let existing = document.getElementById('slot-'+t.id);
+    if (existing) {
+      // update state and display
+      existing.dataset.state = t.state;
+      existing.querySelector('.timer-display').textContent = elapsed;
+      existing.querySelector('.slot-project-name').textContent = proj ? proj.name : 'Unknown';
+      existing.querySelector('.slot-project-num').textContent  = t.category ? `${projNum} · ${t.category}` : projNum;
+      return;
+    }
+
+    const div = document.createElement('div');
+    div.className    = 'timer-slot';
+    div.id           = 'slot-'+t.id;
+    div.dataset.id   = t.id;
+    div.dataset.state= t.state;
+    div.innerHTML = `
+      <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <div>
+          <div class="slot-project-name">${esc(proj?proj.name:'Unknown')}</div>
+          <div class="slot-project-num text-muted">${esc(t.category?`${projNum} · ${t.category}`:projNum)}</div>
+        </div>
+        <div id="td-${t.id}" class="timer-display">${elapsed}</div>
+        <div class="d-flex gap-2 flex-wrap">
+          <button class="btn btn-success btn-sm s-start"  onclick="startSlot('${t.id}')">
+            <i class="bi bi-play-fill me-1"></i>Start</button>
+          <button class="btn btn-warning btn-sm s-pause"  onclick="pauseSlot('${t.id}')">
+            <i class="bi bi-pause-fill me-1"></i>Pause</button>
+          <button class="btn btn-success btn-sm s-resume" onclick="startSlot('${t.id}')">
+            <i class="bi bi-play-fill me-1"></i>Resume</button>
+          <button class="btn btn-danger  btn-sm s-stop"   onclick="stopSlot('${t.id}')">
+            <i class="bi bi-stop-fill me-1"></i>Stop</button>
+          <button class="btn btn-outline-secondary btn-sm s-remove" onclick="removeSlot('${t.id}')">
+            <i class="bi bi-trash"></i></button>
+        </div>
+      </div>`;
+    cont.appendChild(div);
+  });
 }
 
 function startSlot(id){
-  const t=S.activeTimers.find(x=>x.id===id);
-  if(!t||!t.projectId){alert('Select a project first.');return}
-  if(t.state==='running')return;
-  t.lastStart=Date.now();
-  if(!t.sessionStart)t.sessionStart=new Date().toISOString();
-  t.state='running';
-  save(); applySlotState(id); startMasterTick();
+  const t = activeTimers.find(x=>x.id===id);
+  if (!t) return;
+  if (!t.sessionStart) t.sessionStart = new Date().toISOString();
+  t.state     = 'running';
+  t.lastStart = Date.now();
+  saveTimers(); renderSlots(); startMasterTick();
 }
 
 function pauseSlot(id){
-  const t=S.activeTimers.find(x=>x.id===id);
-  if(!t||t.state!=='running')return;
-  t.elapsed=getElapsed(t);
-  t.lastStart=null;
-  t.state='paused';
-  save(); applySlotState(id); checkStopMaster();
+  const t = activeTimers.find(x=>x.id===id);
+  if (!t) return;
+  t.elapsed += Math.floor((Date.now()-t.lastStart)/1000);
+  t.lastStart = null;
+  t.state = 'paused';
+  saveTimers(); renderSlots(); checkStopMaster();
 }
 
 function stopSlot(id){
-  const t=S.activeTimers.find(x=>x.id===id);
-  if(!t||t.state==='stopped')return;
-  const totalSecs=getElapsed(t);
-  if(totalSecs>=1){
-    const startISO=t.sessionStart||new Date(Date.now()-totalSecs*1000).toISOString();
-    const endISO=new Date().toISOString();
-    S.sessions.push({
-      id:String(Date.now()),
-      projectId:t.projectId,
-      startTime:startISO,
-      endTime:endISO,
-      duration:totalSecs,
-      date:startISO.split('T')[0],
-      notes:''
-    });
+  const t = activeTimers.find(x=>x.id===id);
+  if (!t) return;
+  const totalSecs = getElapsed(t);
+
+  // freeze timer
+  if (t.state==='running'){
+    t.elapsed  += Math.floor((Date.now()-t.lastStart)/1000);
+    t.lastStart = null;
   }
-  // reset timer
-  t.elapsed=0; t.lastStart=null; t.sessionStart=null; t.state='stopped';
-  save(); applySlotState(id); checkStopMaster(); renderTodaySessions();
+  t.state = 'stopped';
+  checkStopMaster();
+  renderSlots();
+
+  // set up pendingStop
+  const proj = S.projects.find(p=>p.id===t.projectId);
+  pendingStop = {
+    slotId    : id,
+    totalSecs : totalSecs,
+    projectId : t.projectId,
+    startISO  : t.sessionStart || new Date(Date.now() - totalSecs*1000).toISOString(),
+    category  : t.category || ''
+  };
+
+  // populate stop modal
+  document.getElementById('stopProjName').textContent = proj ? `${proj.num} – ${proj.name}` : 'Unknown Project';
+  document.getElementById('stopCategory').textContent = t.category || '';
+  document.getElementById('stopDuration').textContent = secsToHMS(totalSecs);
+  document.getElementById('stopNotes').value = '';
+
+  stopModal.show();
 }
 
-/** Update a slot's visual state without full re-render */
-function applySlotState(id){
-  const t=S.activeTimers.find(x=>x.id===id);
-  const slot=document.getElementById('slot-'+id);
-  if(!t||!slot)return;
-  slot.dataset.state=t.state;
+async function saveStop(skipNotes){
+  if (!pendingStop) return;
+  const {slotId, totalSecs, projectId, startISO, category} = pendingStop;
+  const notes   = skipNotes ? '' : document.getElementById('stopNotes').value.trim();
+  const endISO  = new Date().toISOString();
+  const dateStr = todayStr();
 
-  const disp=document.getElementById('td-'+id);
-  if(disp){
-    disp.classList.toggle('running',t.state==='running');
-    disp.classList.toggle('paused', t.state==='paused');
-    disp.textContent=secsToHMS(getElapsed(t));
+  if (totalSecs > 0) {
+    const session = {
+      projectId,
+      category  : category || '',
+      notes     : notes,
+      userId    : currentUser.uid,
+      userName  : currentUserName,
+      startTime : startISO,
+      endTime   : endISO,
+      duration  : totalSecs,
+      date      : dateStr,
+      createdAt : CONFIGURED ? firebase.firestore.FieldValue.serverTimestamp() : new Date().toISOString()
+    };
+
+    if (CONFIGURED && db) {
+      try { await db.collection('sessions').add(session); }
+      catch(e){ console.error('session save', e); }
+    } else {
+      // offline: store in memory
+      S.sessions.push({...session, id: Date.now().toString()});
+    }
   }
-  const ss=document.getElementById('ss-'+id);
-  if(ss){
-    if(t.state==='running')
-      ss.innerHTML='<span class="pulse text-success" style="font-size:.8rem"><i class="bi bi-circle-fill" style="font-size:.45rem;vertical-align:middle"></i> Recording…</span>';
-    else if(t.state==='paused')
-      ss.innerHTML='<span class="text-warning" style="font-size:.8rem"><i class="bi bi-pause-circle me-1"></i>Paused</span>';
-    else
-      ss.innerHTML='';
-  }
+
+  resetSlot(slotId);
+  stopModal.hide();
+  pendingStop = null;
 }
 
-/** Full render of all slots */
-function renderSlots(){
-  const c=document.getElementById('timerSlots');
-  if(!S.activeTimers.length){
-    c.innerHTML='<div class="col-12"><div class="empty" style="padding:1rem"><i class="bi bi-stopwatch" style="font-size:2rem;opacity:.3"></i>No timers yet — click <b>Add Timer</b> below</div></div>';
-    return;
-  }
-  c.innerHTML=S.activeTimers.map(t=>`
-    <div class="col-md-6 col-xl-4">
-      <div class="timer-slot" id="slot-${t.id}" data-state="${t.state}">
-        <div class="d-flex gap-2 mb-2 align-items-center">
-          <select class="form-select form-select-sm slot-sel flex-grow-1"
-                  onchange="setSlotProject('${t.id}',this.value)">
-            <option value="">— Select Project —</option>
-            ${S.projects.filter(p=>p.status!=='Cancelled').map(p=>
-              `<option value="${p.id}"${p.id===t.projectId?' selected':''}>${esc(p.number)} — ${esc(p.name)}</option>`
-            ).join('')}
-          </select>
-          <button class="btn btn-sm btn-outline-danger s-remove py-0 px-2"
-                  onclick="removeSlot('${t.id}')" title="Remove timer">
-            <i class="bi bi-x-lg"></i>
-          </button>
-        </div>
-
-        <div class="slot-time${t.state==='running'?' running':t.state==='paused'?' paused':''}"
-             id="td-${t.id}">${secsToHMS(getElapsed(t))}</div>
-
-        <div class="text-muted text-center mb-3" style="font-size:.8rem;min-height:1.2em" id="pl-${t.id}">
-          ${(()=>{const p=S.projects.find(x=>x.id===t.projectId);return p?esc(p.number)+' — '+esc(p.name):'No project selected'})()}
-        </div>
-
-        <div class="d-flex gap-2 justify-content-center flex-wrap">
-          <button class="btn-go start s-start" onclick="startSlot('${t.id}')" ${!t.projectId?'disabled':''}>
-            <i class="bi bi-play-fill"></i> Start
-          </button>
-          <button class="btn-go start s-resume" onclick="startSlot('${t.id}')">
-            <i class="bi bi-play-fill"></i> Resume
-          </button>
-          <button class="btn-go pause s-pause" onclick="pauseSlot('${t.id}')">
-            <i class="bi bi-pause-fill"></i> Pause
-          </button>
-          <button class="btn-go stop s-stop" onclick="stopSlot('${t.id}')">
-            <i class="bi bi-stop-fill"></i> Stop
-          </button>
-        </div>
-
-        <div class="slot-status text-center mt-2" id="ss-${t.id}" style="min-height:1.4em">
-          ${t.state==='running'?'<span class="pulse text-success" style="font-size:.8rem"><i class="bi bi-circle-fill" style="font-size:.45rem;vertical-align:middle"></i> Recording…</span>':
-            t.state==='paused'?'<span class="text-warning" style="font-size:.8rem"><i class="bi bi-pause-circle me-1"></i>Paused</span>':''}
-        </div>
-      </div>
-    </div>
-  `).join('');
+function resetSlot(id){
+  const t = activeTimers.find(x=>x.id===id);
+  if (t){ t.state='stopped'; t.elapsed=0; t.lastStart=null; t.sessionStart=null; }
+  saveTimers(); renderSlots();
 }
 
-// ══════════════════════════════════════════════════════
-//  TODAY SESSIONS
-// ══════════════════════════════════════════════════════
-function renderTodaySessions(){
-  const today=new Date().toISOString().split('T')[0];
-  const list=S.sessions.filter(s=>s.date===today)
-    .sort((a,b)=>b.startTime.localeCompare(a.startTime));
-  const totalSecs=list.reduce((t,s)=>t+s.duration,0);
-  document.getElementById('todayTotal').textContent=secsToHM(totalSecs);
-  const el=document.getElementById('todayList');
-  if(!list.length){
-    el.innerHTML='<div class="empty" style="padding:1.5rem"><i class="bi bi-clock"></i>No sessions recorded today</div>';
-    return;
-  }
-  el.innerHTML=list.map(s=>{
-    const p=S.projects.find(x=>x.id===s.projectId);
-    const pl=p?`<span class="fw-semibold">${esc(p.number)}</span> — ${esc(p.name)}`:'<span class="text-muted">Unknown</span>';
-    return `<div class="sess-item">
-      <div>
-        <div class="small mb-0">${pl}</div>
-        <div class="text-muted" style="font-size:.77rem">${fmtT(s.startTime)} → ${fmtT(s.endTime)}
-          ${s.notes?` <i class="bi bi-chat-text ms-1"></i> ${esc(s.notes)}`:''}</div>
-      </div>
-      <div class="d-flex align-items-center gap-1">
-        <span class="badge rounded-pill bg-primary">${secsToHMS(s.duration)}</span>
-        <button class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="openEditSession('${s.id}')" title="Edit"><i class="bi bi-pencil"></i></button>
-        <button class="btn btn-sm btn-outline-danger   py-0 px-1" onclick="delSession('${s.id}')"     title="Delete"><i class="bi bi-trash"></i></button>
-      </div>
-    </div>`;
-  }).join('');
+function removeSlot(id){
+  const t = activeTimers.find(x=>x.id===id);
+  if (t && t.state==='running') pauseSlot(id);
+  activeTimers = activeTimers.filter(x=>x.id!==id);
+  saveTimers(); renderSlots(); checkStopMaster();
 }
 
-// ══════════════════════════════════════════════════════
-//  PROJECTS
-// ══════════════════════════════════════════════════════
-function openProjectModal(id){
-  editProjId=id||null;
-  document.getElementById('pStatus').innerHTML=
-    '<option value="">Select Status</option>'+S.settings.statuses.map(v=>`<option>${esc(v)}</option>`).join('');
-  document.getElementById('pCat').innerHTML=
-    '<option value="">Select Category</option>'+S.settings.categories.map(v=>`<option>${esc(v)}</option>`).join('');
-  document.getElementById('projModalTitle').textContent=id?'Edit Project':'Add Project';
-  if(id){
-    const p=S.projects.find(x=>x.id===id);
-    sv('pNum',p.number||''); sv('pName',p.name||''); sv('pValue',p.value||'');
-    sv('pPlanned',p.plannedHours||''); sv('pCat',p.category||''); sv('pStatus',p.status||'');
-    sv('pStart',p.startDate||''); sv('pEnd',p.endDate||''); sv('pDesc',p.description||'');
-  }else{
-    ['pNum','pName','pValue','pPlanned','pDesc'].forEach(x=>sv(x,''));
-    sv('pStatus','Planning');
-    sv('pStart',new Date().toISOString().split('T')[0]);
-    sv('pEnd',''); sv('pCat','');
-  }
+/* ═══════════════════════════════════════════════════════════════
+   PROJECTS
+═══════════════════════════════════════════════════════════════ */
+function openAddProject(){
+  document.getElementById('projModalTitle').textContent = 'Add Project';
+  document.getElementById('editProjId').value = '';
+  ['projNum','projName','projValue','projHours','projDesc'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('projStart').value = todayStr();
+  document.getElementById('projEnd').value   = '';
+  populateSelect('projStatus', S.settings.statusOptions, 'Active');
+  populateSelect('projType',   S.settings.projectTypes,  '');
+  document.getElementById('currPrefix').textContent = S.settings.currency || '₹';
   projModal.show();
 }
 
-function saveProject(){
-  const num=gv('pNum').trim(), name=gv('pName').trim();
-  if(!num||!name){alert('Project Number and Name are required.');return}
-  const data={
-    number:num, name,
-    value:       parseFloat(gv('pValue'))  ||0,
-    plannedHours:parseFloat(gv('pPlanned'))||0,
-    category:gv('pCat'), status:gv('pStatus')||'Planning',
-    startDate:gv('pStart'), endDate:gv('pEnd'), description:gv('pDesc').trim()
-  };
-  if(editProjId){
-    const i=S.projects.findIndex(p=>p.id===editProjId);
-    if(i>=0)S.projects[i]={...S.projects[i],...data};
-  }else{
-    S.projects.push({id:String(Date.now()),...data});
-  }
-  save(); projModal.hide(); renderProjects(); renderSlots();
+function editProject(id){
+  const p = S.projects.find(x=>x.id===id);
+  if (!p) return;
+  document.getElementById('projModalTitle').textContent = 'Edit Project';
+  document.getElementById('editProjId').value   = id;
+  document.getElementById('projNum').value       = p.num   || '';
+  document.getElementById('projName').value      = p.name  || '';
+  document.getElementById('projValue').value     = p.value || '';
+  document.getElementById('projHours').value     = p.plannedHours || '';
+  document.getElementById('projDesc').value      = p.desc  || '';
+  document.getElementById('projStart').value     = p.startDate || '';
+  document.getElementById('projEnd').value       = p.endDate   || '';
+  document.getElementById('currPrefix').textContent = S.settings.currency || '₹';
+  populateSelect('projStatus', S.settings.statusOptions, p.status);
+  populateSelect('projType',   S.settings.projectTypes,  p.type);
+  projModal.show();
 }
 
-function deleteProject(id){
-  if(!confirm('Delete this project and all its sessions?'))return;
-  S.projects=S.projects.filter(p=>p.id!==id);
-  S.sessions=S.sessions.filter(s=>s.projectId!==id);
-  // stop any active timer for this project
-  S.activeTimers.forEach(t=>{if(t.projectId===id){t.state='stopped';t.elapsed=0;t.lastStart=null;t.sessionStart=null}});
-  save(); renderProjects(); renderSlots();
+async function saveProject(){
+  const num  = document.getElementById('projNum').value.trim();
+  const name = document.getElementById('projName').value.trim();
+  if (!num||!name){ alert('Project number and name are required.'); return; }
+
+  const data = {
+    num, name,
+    value      : parseFloat(document.getElementById('projValue').value)||0,
+    plannedHours: parseFloat(document.getElementById('projHours').value)||0,
+    status     : document.getElementById('projStatus').value,
+    type       : document.getElementById('projType').value,
+    startDate  : document.getElementById('projStart').value,
+    endDate    : document.getElementById('projEnd').value,
+    desc       : document.getElementById('projDesc').value.trim(),
+    updatedAt  : CONFIGURED ? firebase.firestore.FieldValue.serverTimestamp() : new Date().toISOString()
+  };
+
+  const editId = document.getElementById('editProjId').value;
+
+  if (CONFIGURED && db) {
+    if (editId) {
+      await db.collection('projects').doc(editId).update(data);
+    } else {
+      data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+      await db.collection('projects').add(data);
+    }
+  } else {
+    // offline
+    if (editId) {
+      const i = S.projects.findIndex(p=>p.id===editId);
+      if (i>=0) S.projects[i] = {...S.projects[i], ...data};
+    } else {
+      S.projects.push({...data, id:Date.now().toString(), createdAt:new Date().toISOString()});
+    }
+    renderProjects(); renderSlots(); populateProjectDropdowns();
+  }
+
+  projModal.hide();
+}
+
+async function deleteProject(id){
+  if (!confirm('Delete this project? Sessions will remain.')) return;
+  if (CONFIGURED && db) {
+    await db.collection('projects').doc(id).delete();
+  } else {
+    S.projects = S.projects.filter(p=>p.id!==id);
+    renderProjects(); renderSlots();
+  }
 }
 
 function renderProjects(){
-  const q=(document.getElementById('projSearch')?.value||'').toLowerCase();
-  const sf=document.getElementById('projSF')?.value||'';
-  const cf=document.getElementById('projCF')?.value||'';
-  setSel('projSF',S.settings.statuses,sf,'All Statuses');
-  setSel('projCF',S.settings.categories,cf,'All Categories');
-  const list=S.projects.filter(p=>{
-    const mq=!q||p.name.toLowerCase().includes(q)||p.number.toLowerCase().includes(q);
-    return mq&&(!sf||p.status===sf)&&(!cf||p.category===cf);
-  });
-  const el=document.getElementById('projList');
-  if(!list.length){el.innerHTML='<div class="empty"><i class="bi bi-folder-x"></i>No projects found.</div>';return}
-  el.innerHTML=list.map(p=>{
-    const actH=S.sessions.filter(s=>s.projectId===p.id).reduce((t,s)=>t+s.duration,0)/3600;
-    const prog=p.plannedHours?Math.min(100,Math.round(actH/p.plannedHours*100)):null;
-    const pc=prog===null?'':(prog>=100?'#c62828':prog>=75?'#e65100':'#2e7d32');
-    const sc=stColor(p.status);
-    return `<div class="proj-card" style="border-left-color:${sc}">
-      <div class="d-flex justify-content-between align-items-start">
-        <div class="flex-grow-1">
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="fw-bold text-primary">${esc(p.number)}</span>
-            <span class="fw-semibold">${esc(p.name)}</span>
-            ${p.status?`<span class="stat-badge" style="background:${sc}">${esc(p.status)}</span>`:''}
-            ${p.category?`<span class="badge bg-secondary rounded-pill" style="font-size:.72rem">${esc(p.category)}</span>`:''}
+  const list  = document.getElementById('projectsList');
+  const noMsg = document.getElementById('noProjMsg');
+  list.innerHTML='';
+  if (!S.projects.length){ noMsg.classList.remove('d-none'); return; }
+  noMsg.classList.add('d-none');
+
+  S.projects.forEach(p=>{
+    // calc logged hours from sessions
+    const loggedHrs = S.sessions
+      .filter(s=>s.projectId===p.id)
+      .reduce((sum,s)=>sum+s.duration/3600, 0);
+    const pct = p.plannedHours ? Math.min(100, Math.round(loggedHrs/p.plannedHours*100)) : 0;
+    const over = p.plannedHours && loggedHrs > p.plannedHours;
+
+    const badgeCol = {Active:'success',Completed:'primary','On Hold':'warning',Cancelled:'secondary'}[p.status]||'secondary';
+    const card = document.createElement('div');
+    card.className='proj-card';
+    card.innerHTML=`
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+        <div style="flex:1;min-width:200px">
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="fw-bold text-primary">${esc(p.num)}</span>
+            <span class="badge bg-${badgeCol}">${esc(p.status||'Active')}</span>
+            ${p.type?`<span class="badge bg-light text-dark border">${esc(p.type)}</span>`:''}
           </div>
-          ${p.description?`<div class="text-muted small mb-1">${esc(p.description)}</div>`:''}
-          <div class="d-flex flex-wrap gap-3" style="font-size:.8rem;color:#555">
-            ${p.value?`<span><i class="bi bi-currency-rupee"></i>${p.value.toLocaleString('en-IN')}</span>`:''}
-            ${p.plannedHours?`<span><i class="bi bi-clock me-1"></i>Planned: <b>${p.plannedHours}h</b></span>`:''}
-            <span><i class="bi bi-clock-history me-1"></i>Actual: <b>${actH.toFixed(1)}h</b></span>
-            ${p.startDate?`<span><i class="bi bi-calendar me-1"></i>${p.startDate}</span>`:''}
-            ${p.endDate?`<span><i class="bi bi-calendar-check me-1"></i>${p.endDate}</span>`:''}
-          </div>
-          ${prog!==null?`<div class="mt-2">
-            <div class="d-flex justify-content-between" style="font-size:.75rem;margin-bottom:2px">
-              <span class="text-muted">Progress</span><span style="color:${pc};font-weight:600">${prog}%</span>
-            </div>
-            <div class="progress"><div class="progress-bar" style="width:${prog}%;background:${pc}"></div></div>
-          </div>`:''}
+          <div class="fw-semibold mb-1">${esc(p.name)}</div>
+          ${p.desc?`<div class="text-muted" style="font-size:.82rem">${esc(p.desc)}</div>`:''}
         </div>
-        <div class="d-flex gap-1 ms-2">
-          <button class="btn btn-sm btn-outline-primary py-0" onclick="openProjectModal('${p.id}')" title="Edit"><i class="bi bi-pencil"></i></button>
-          <button class="btn btn-sm btn-outline-danger   py-0" onclick="deleteProject('${p.id}')" title="Delete"><i class="bi bi-trash"></i></button>
+        <div class="text-end" style="min-width:180px">
+          ${p.value?`<div class="fw-semibold">${S.settings.currency||'₹'}${Number(p.value).toLocaleString('en-IN')}</div>`:''}
+          <div class="text-muted" style="font-size:.82rem">
+            ${loggedHrs.toFixed(1)}h / ${p.plannedHours||'?'}h planned
+          </div>
+          <div class="d-flex gap-2 mt-2 justify-content-end">
+            <button class="btn btn-outline-primary btn-sm" onclick="editProject('${p.id}')">
+              <i class="bi bi-pencil"></i></button>
+            <button class="btn btn-outline-danger btn-sm" onclick="deleteProject('${p.id}')">
+              <i class="bi bi-trash"></i></button>
+          </div>
         </div>
       </div>
-    </div>`;
-  }).join('');
+      ${p.plannedHours ? `
+      <div class="mt-2">
+        <div class="d-flex justify-content-between" style="font-size:.78rem;color:#888">
+          <span>Progress</span><span>${pct}%${over?' ⚠ Over budget':''}</span>
+        </div>
+        <div class="progress mt-1">
+          <div class="progress-bar${over?' over':''}" style="width:${pct}%"></div>
+        </div>
+      </div>` : ''}`;
+    list.appendChild(card);
+  });
 }
 
-// ══════════════════════════════════════════════════════
-//  SESSION MODAL
-// ══════════════════════════════════════════════════════
-function openManualEntry(){
-  editSessId=null;
-  document.getElementById('sessModalTitle').textContent='Add Manual Entry';
-  fillSessSel(null);
-  const now=new Date(), ago=new Date(now-3600000);
-  sv('sStart',toLocalDT(ago)); sv('sEnd',toLocalDT(now)); sv('sNotes','');
-  sessModal.show();
+/* ═══════════════════════════════════════════════════════════════
+   SESSION LOG
+═══════════════════════════════════════════════════════════════ */
+function setLogView(v){
+  logUserView = v;
+  document.getElementById('logViewAll').classList.toggle('active', v==='all');
+  document.getElementById('logViewMe').classList.toggle('active',  v==='me');
+  renderSessionLog();
 }
-function openEditSession(id){
-  editSessId=id;
-  const s=S.sessions.find(x=>x.id===id); if(!s)return;
-  document.getElementById('sessModalTitle').textContent='Edit Session';
-  fillSessSel(s.projectId);
-  sv('sStart',toLocalDT(new Date(s.startTime)));
-  sv('sEnd',  toLocalDT(new Date(s.endTime)));
-  sv('sNotes',s.notes||'');
-  sessModal.show();
-}
-function fillSessSel(sel){
-  document.getElementById('sProject').innerHTML=
-    '<option value="">— Select Project —</option>'+
-    S.projects.map(p=>`<option value="${p.id}"${p.id===sel?' selected':''}>${esc(p.number)} — ${esc(p.name)}</option>`).join('');
-}
-function saveSession(){
-  const pid=document.getElementById('sProject').value;
-  if(!pid){alert('Please select a project.');return}
-  const st=new Date(document.getElementById('sStart').value);
-  const en=new Date(document.getElementById('sEnd').value);
-  if(isNaN(st)||isNaN(en)||en<=st){alert('End time must be after start time.');return}
-  const rec={projectId:pid,startTime:st.toISOString(),endTime:en.toISOString(),
-    duration:Math.floor((en-st)/1000),date:st.toISOString().split('T')[0],notes:gv('sNotes').trim()};
-  if(editSessId){
-    const i=S.sessions.findIndex(s=>s.id===editSessId);
-    if(i>=0)S.sessions[i]={...S.sessions[i],...rec};
-  }else{
-    S.sessions.push({id:String(Date.now()),...rec});
+
+async function renderSessionLog(){
+  const dateVal = document.getElementById('logDate').value || todayStr();
+  const log     = document.getElementById('sessionLog');
+  const noMsg   = document.getElementById('noSessMsg');
+  log.innerHTML='';
+
+  let sessions = [];
+  if (CONFIGURED && db) {
+    const snap = await db.collection('sessions').where('date','==',dateVal).orderBy('createdAt','desc').get()
+      .catch(()=>db.collection('sessions').where('date','==',dateVal).get());
+    sessions = snap.docs.map(d=>({id:d.id,...d.data()}));
+  } else {
+    sessions = S.sessions.filter(s=>s.date===dateVal);
   }
-  save(); sessModal.hide(); renderTodaySessions();
-}
-function delSession(id){
-  if(!confirm('Delete this session?'))return;
-  S.sessions=S.sessions.filter(s=>s.id!==id); save(); renderTodaySessions();
+
+  if (logUserView==='me') sessions = sessions.filter(s=>s.userId===currentUser.uid);
+
+  if (!sessions.length){ noMsg.classList.remove('d-none'); return; }
+  noMsg.classList.add('d-none');
+
+  sessions.forEach(s=>{
+    const proj = S.projects.find(p=>p.id===s.projectId);
+    const div  = document.createElement('div');
+    div.className='sess-row';
+    const start = s.startTime ? new Date(s.startTime).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}) : '';
+    const end   = s.endTime   ? new Date(s.endTime).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}) : '';
+    div.innerHTML=`
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-1">
+        <div>
+          <span class="fw-semibold">${esc(proj?proj.name:'Unknown')}</span>
+          ${s.category?`<span class="badge bg-light text-dark border ms-1" style="font-size:.72rem">${esc(s.category)}</span>`:''}
+          <span class="user-chip ms-1">${esc(s.userName||'?')}</span>
+        </div>
+        <div class="dur">${secsToHMS(s.duration||0)}</div>
+      </div>
+      <div class="text-muted mt-1" style="font-size:.8rem">${start}${start&&end?' → ':''}${end}</div>
+      ${s.notes?`<div class="notes-text"><i class="bi bi-journal-text me-1"></i>${esc(s.notes)}</div>`:''}`;
+    log.appendChild(div);
+  });
 }
 
-// ══════════════════════════════════════════════════════
-//  DASHBOARD
-// ══════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════
+   DASHBOARD
+═══════════════════════════════════════════════════════════════ */
 function setDashView(v){
-  dashView=v;
-  document.getElementById('dashDate').classList.toggle('d-none',v!=='day');
-  document.getElementById('dashMonth').classList.toggle('d-none',v!=='month');
-  document.getElementById('dailySect').classList.toggle('d-none',v!=='month');
-  document.getElementById('btnDay').className  =v==='day'  ?'btn btn-primary btn-sm':'btn btn-outline-primary btn-sm';
-  document.getElementById('btnMonth').className=v==='month'?'btn btn-primary btn-sm':'btn btn-outline-primary btn-sm';
+  dashUserView = v;
+  document.getElementById('dashViewAll').classList.toggle('active', v==='all');
+  document.getElementById('dashViewMe').classList.toggle('active',  v==='me');
   renderDashboard();
 }
-function filtSess(){
-  if(dashView==='day') return S.sessions.filter(s=>s.date===document.getElementById('dashDate').value);
-  const m=document.getElementById('dashMonth').value;
-  return S.sessions.filter(s=>s.date.startsWith(m));
-}
-function renderDashboard(){
-  const sess=filtSess();
-  const totalS=sess.reduce((t,s)=>t+s.duration,0);
-  const pids=[...new Set(sess.map(s=>s.projectId))];
-  const actP=S.projects.filter(p=>p.status==='In Progress').length;
-  const doneP=S.projects.filter(p=>p.status==='Completed').length;
-  document.getElementById('kpiCards').innerHTML=[
-    {val:secsToHM(totalS),lbl:'Time Logged',color:'var(--primary)'},
-    {val:pids.length,     lbl:'Projects Worked (period)',color:'#2e7d32'},
-    {val:actP,            lbl:'In-Progress Projects',color:'#e65100'},
-    {val:doneP,           lbl:'Completed Projects',color:'#6a1b9a'}
-  ].map(k=>`<div class="col-6 col-md-3"><div class="kpi-card"><div class="val" style="color:${k.color}">${k.val}</div><div class="lbl">${k.lbl}</div></div></div>`).join('');
 
-  const ph={};
-  sess.forEach(s=>{ph[s.projectId]=(ph[s.projectId]||0)+s.duration/3600});
-  const lbls=Object.keys(ph).map(id=>{const p=S.projects.find(x=>x.id===id);return p?p.number:'?'});
-  const vals=Object.values(ph).map(h=>+h.toFixed(2));
-  const CLRS=['#1a237e','#283593','#1565c0','#0277bd','#00695c','#2e7d32','#558b2f','#f57f17','#e65100','#c62828'];
+async function renderDashboard(){
+  const period = document.getElementById('dashPeriod').value;
+  const year   = parseInt(document.getElementById('dashYear').value);
+  const month  = parseInt(document.getElementById('dashMonth').value);
+  const now    = new Date();
 
-  if(barChart)barChart.destroy();
-  barChart=new Chart(document.getElementById('barChart'),{type:'bar',data:{labels:lbls,datasets:[{label:'Hours',data:vals,backgroundColor:lbls.map((_,i)=>CLRS[i%CLRS.length]),borderRadius:6}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,title:{display:true,text:'Hours'}}}}});
-
-  if(dnutChart)dnutChart.destroy();
-  dnutChart=new Chart(document.getElementById('dnutChart'),{type:'doughnut',data:{labels:lbls,datasets:[{data:vals,backgroundColor:lbls.map((_,i)=>CLRS[i%CLRS.length])}]},options:{responsive:true,plugins:{legend:{position:'bottom',labels:{font:{size:10},padding:8}}}}});
-
-  if(dashView==='month'){
-    const m=document.getElementById('dashMonth').value;
-    const dim=new Date(m.split('-')[0],m.split('-')[1],0).getDate();
-    const dvals=[],dlbls=[];
-    for(let d=1;d<=dim;d++){
-      const ds=`${m}-${String(d).padStart(2,'0')}`;
-      dlbls.push(d);
-      dvals.push(+(S.sessions.filter(s=>s.date===ds).reduce((t,s)=>t+s.duration,0)/3600).toFixed(2));
-    }
-    if(dailyChart)dailyChart.destroy();
-    dailyChart=new Chart(document.getElementById('dailyChart'),{type:'bar',data:{labels:dlbls,datasets:[{label:'Hours',data:dvals,backgroundColor:'#3949ab',borderRadius:4}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,title:{display:true,text:'Hours'}}}}});
+  let startDate, endDate;
+  if (period==='today'){
+    startDate = endDate = todayStr();
+  } else if (period==='week'){
+    const d = new Date(); d.setDate(d.getDate()-d.getDay());
+    startDate = d.toISOString().slice(0,10);
+    endDate   = todayStr();
+  } else {
+    startDate = `${year}-${String(month+1).padStart(2,'0')}-01`;
+    const last = new Date(year, month+1, 0);
+    endDate   = last.toISOString().slice(0,10);
   }
 
-  const tbody=document.getElementById('summaryBody');
-  if(!S.projects.length){tbody.innerHTML='<tr><td colspan="11" class="text-center text-muted py-3">No projects yet</td></tr>';return}
-  tbody.innerHTML=S.projects.map(p=>{
-    const actH=S.sessions.filter(s=>s.projectId===p.id).reduce((t,s)=>t+s.duration,0)/3600;
-    const planned=p.plannedHours||0, rem=Math.max(0,planned-actH);
-    const prog=planned?Math.min(100,Math.round(actH/planned*100)):null;
-    const pc=prog===null?'':(prog>=100?'#c62828':prog>=75?'#e65100':'#2e7d32');
-    const sc=stColor(p.status);
-    return `<tr>
-      <td class="fw-semibold text-primary">${esc(p.number)}</td><td>${esc(p.name)}</td>
-      <td>${p.category?`<span class="badge bg-secondary" style="font-size:.72rem">${esc(p.category)}</span>`:'—'}</td>
-      <td>${p.status?`<span class="stat-badge" style="background:${sc};font-size:.72rem">${esc(p.status)}</span>`:'—'}</td>
-      <td>${p.value?'₹'+p.value.toLocaleString('en-IN'):'—'}</td>
-      <td>${planned||'—'}</td><td><b>${actH.toFixed(1)}</b></td><td>${planned?rem.toFixed(1):'—'}</td>
-      <td>${prog!==null?`<div class="d-flex align-items-center gap-1">
-        <div class="progress flex-grow-1" style="height:8px;min-width:60px">
-          <div class="progress-bar" style="width:${prog}%;background:${pc}"></div>
-        </div>
-        <span style="font-size:.75rem;color:${pc};font-weight:600;min-width:32px">${prog}%</span>
-      </div>`:'—'}</td>
-      <td>${p.startDate||'—'}</td><td>${p.endDate||'—'}</td>
-    </tr>`;
-  }).join('');
-}
+  let sessions = [];
+  if (CONFIGURED && db) {
+    let q = db.collection('sessions')
+      .where('date','>=',startDate)
+      .where('date','<=',endDate);
+    const snap = await q.get().catch(()=>({docs:[]}));
+    sessions = snap.docs.map(d=>({id:d.id,...d.data()}));
+  } else {
+    sessions = S.sessions.filter(s=>s.date>=startDate && s.date<=endDate);
+  }
 
-// ══════════════════════════════════════════════════════
-//  SETTINGS
-// ══════════════════════════════════════════════════════
-function renderSettings(){
-  renderTags('statusTags',S.settings.statuses,'removeStatus');
-  renderTags('catTags',   S.settings.categories,'removeCategory');
-}
-function renderTags(cid,items,fn){
-  document.getElementById(cid).innerHTML=items.map(v=>
-    `<span class="tag-item">${esc(v)} <span class="tag-x" onclick="${fn}(this)" data-val="${v.replace(/"/g,'&quot;')}">&times;</span></span>`
-  ).join('');
-}
-function addStatus(){
-  const el=document.getElementById('newStatus'),val=el.value.trim();if(!val)return;
-  if(S.settings.statuses.includes(val)){alert('Already exists.');return}
-  S.settings.statuses.push(val);el.value='';save();renderSettings();
-}
-function removeStatus(el){
-  const v=el.dataset.val;if(!confirm(`Remove "${v}"?`))return;
-  S.settings.statuses=S.settings.statuses.filter(x=>x!==v);save();renderSettings();
-}
-function addCategory(){
-  const el=document.getElementById('newCat'),val=el.value.trim();if(!val)return;
-  if(S.settings.categories.includes(val)){alert('Already exists.');return}
-  S.settings.categories.push(val);el.value='';save();renderSettings();
-}
-function removeCategory(el){
-  const v=el.dataset.val;if(!confirm(`Remove "${v}"?`))return;
-  S.settings.categories=S.settings.categories.filter(x=>x!==v);save();renderSettings();
-}
+  if (dashUserView==='me') sessions = sessions.filter(s=>s.userId===currentUser.uid);
 
-// ══════════════════════════════════════════════════════
-//  EXPORT
-// ══════════════════════════════════════════════════════
-function exportJSON(){dlBlob(new Blob([JSON.stringify({projects:S.projects,sessions:S.sessions},null,2)],{type:'application/json'}),`pss-${today()}.json`)}
-function exportCSV(){
-  const rows=[['ID','Project #','Project Name','Date','Start','End','Duration (h)','Notes']];
-  S.sessions.forEach(s=>{
-    const p=S.projects.find(x=>x.id===s.projectId);
-    rows.push([s.id,p?.number||'',p?.name||'',s.date,fmtT(s.startTime),fmtT(s.endTime),(s.duration/3600).toFixed(2),s.notes||'']);
+  const totalSecs  = sessions.reduce((a,s)=>a+(s.duration||0), 0);
+  const totalHrs   = totalSecs/3600;
+  const projIds    = [...new Set(sessions.map(s=>s.projectId))];
+  const avgSession = sessions.length ? totalSecs/sessions.length : 0;
+
+  document.getElementById('dTotalHours').textContent    = totalHrs.toFixed(1)+'h';
+  document.getElementById('dActiveProjCount').textContent = projIds.length;
+  document.getElementById('dSessionCount').textContent  = sessions.length;
+  document.getElementById('dAvgSession').textContent    = secsToHMS(avgSession);
+
+  // Per-project aggregation
+  const projMap = {};
+  sessions.forEach(s=>{
+    if (!projMap[s.projectId]) projMap[s.projectId] = {secs:0, count:0, users:{}};
+    projMap[s.projectId].secs  += s.duration||0;
+    projMap[s.projectId].count += 1;
+    const uname = s.userName||'?';
+    projMap[s.projectId].users[uname] = (projMap[s.projectId].users[uname]||0) + (s.duration||0)/3600;
   });
-  dlBlob(new Blob([rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n')],{type:'text/csv'}),`pss-sessions-${today()}.csv`);
+
+  const labels=[], data=[], colors=[];
+  const palette = ['#3949ab','#1e88e5','#43a047','#e53935','#fb8c00','#8e24aa','#00897b','#6d4c41'];
+
+  S.projects.filter(p=>projMap[p.id]).forEach((p,i)=>{
+    labels.push(p.name);
+    data.push((projMap[p.id].secs/3600).toFixed(2));
+    colors.push(palette[i%palette.length]);
+  });
+
+  // Bar chart
+  if (barChart) barChart.destroy();
+  barChart = new Chart(document.getElementById('barChart'), {
+    type:'bar',
+    data:{ labels, datasets:[{label:'Hours',data,backgroundColor:colors,borderRadius:6}] },
+    options:{
+      responsive:true,
+      plugins:{ legend:{display:false}, title:{display:true,text:'Hours by Project',font:{size:14}} },
+      scales:{ y:{beginAtZero:true,title:{display:true,text:'Hours'}} }
+    }
+  });
+
+  // Pie chart
+  if (pieChart) pieChart.destroy();
+  if (labels.length){
+    pieChart = new Chart(document.getElementById('pieChart'), {
+      type:'doughnut',
+      data:{ labels, datasets:[{data,backgroundColor:colors,borderWidth:2}] },
+      options:{
+        responsive:true,
+        plugins:{ legend:{position:'bottom',labels:{font:{size:11}}},
+          title:{display:true,text:'Distribution',font:{size:14}} }
+      }
+    });
+  }
+
+  // Summary table
+  const tbody = document.getElementById('summaryBody');
+  tbody.innerHTML='';
+  S.projects.filter(p=>projMap[p.id]).forEach((p,i)=>{
+    const pm  = projMap[p.id];
+    const hrs = pm.secs/3600;
+    const pct = p.plannedHours ? Math.min(100,Math.round(hrs/p.plannedHours*100)) : null;
+    const over= p.plannedHours && hrs > p.plannedHours;
+
+    // user breakdown chips
+    const breakdown = Object.entries(pm.users)
+      .map(([n,h])=>`<span class="user-chip">${esc(n)}: ${h.toFixed(1)}h</span>`).join(' ');
+
+    tbody.innerHTML+=`
+      <tr>
+        <td><span class="fw-semibold text-primary">${esc(p.num)}</span> ${esc(p.name)}</td>
+        <td class="fw-semibold">${hrs.toFixed(1)}h</td>
+        <td>${pm.count}</td>
+        <td>${breakdown}</td>
+        <td style="min-width:120px">
+          ${pct!==null ? `
+            <div class="progress mb-1" style="height:6px">
+              <div class="progress-bar${over?' over':''}" style="width:${pct}%"></div>
+            </div>
+            <small class="${over?'text-danger':'text-muted'}">${pct}%${over?' over':''}</small>
+          ` : '<small class="text-muted">No budget</small>'}
+        </td>
+      </tr>`;
+  });
+  if (!labels.length) tbody.innerHTML='<tr><td colspan="5" class="text-center text-muted py-3">No sessions in this period.</td></tr>';
 }
-function dlBlob(b,n){const u=URL.createObjectURL(b);Object.assign(document.createElement('a'),{href:u,download:n}).click();URL.revokeObjectURL(u)}
-function clearAll(){
-  if(!confirm('Delete ALL data? Cannot be undone.'))return;
-  if(!confirm('Final confirmation — delete everything?'))return;
-  localStorage.removeItem('pss_v4');
-  S=clone(DEFS);
-  if(masterIv){clearInterval(masterIv);masterIv=null;}
-  renderSlots(); renderTodaySessions(); renderProjects(); renderSettings();
+
+/* ═══════════════════════════════════════════════════════════════
+   SETTINGS
+═══════════════════════════════════════════════════════════════ */
+function renderSettingsUI(){
+  document.getElementById('setCompany').value = S.settings.company  || '';
+  document.getElementById('setCurrency').value= S.settings.currency || '₹';
+
+  renderListUI('projectTypes',  'listProjectTypes');
+  renderListUI('statusOptions', 'listStatusOptions');
+  renderListUI('workCategories','listWorkCategories');
 }
 
-// ══════════════════════════════════════════════════════
-//  HELPERS
-// ══════════════════════════════════════════════════════
-function secsToHMS(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;return`${p2(h)}:${p2(m)}:${p2(sec)}`}
-function secsToHM(s){return`${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`}
-function fmtT(iso){return new Date(iso).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}
-function toLocalDT(d){return`${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}`}
-function p2(n){return String(n).padStart(2,'0')}
-function today(){return new Date().toISOString().split('T')[0]}
-function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
-function stColor(s){return{'Planning':'#78909c','In Progress':'#1565c0','On Hold':'#e65100','Completed':'#2e7d32','Cancelled':'#b71c1c'}[s]||'#9e9e9e'}
-function gv(id){return document.getElementById(id)?.value||''}
-function sv(id,val){const el=document.getElementById(id);if(el)el.value=val}
-function setSel(id,items,cur,ph){
-  const el=document.getElementById(id);if(!el)return;
-  el.innerHTML=`<option value="">${ph}</option>`+items.map(x=>`<option${x===cur?' selected':''}>${esc(x)}</option>`).join('');
+function renderListUI(key, containerId){
+  const cont = document.getElementById(containerId);
+  cont.innerHTML='';
+  (S.settings[key]||[]).forEach(item=>{
+    const d = document.createElement('div');
+    d.className='d-flex align-items-center gap-1 mb-1';
+    d.innerHTML=`<span class="badge bg-light text-dark border flex-fill text-start py-1 px-2">${esc(item)}</span>
+      <button class="btn btn-outline-danger btn-sm py-0 px-1" onclick="removeListItem('${key}','${esc(item)}')">
+        <i class="bi bi-x"></i></button>`;
+    cont.appendChild(d);
+  });
 }
 
-// ══════════════════════════════════════════════════════
-//  INIT
-// ══════════════════════════════════════════════════════
-document.addEventListener('DOMContentLoaded',()=>{
-  load();
+function addListItem(key, inputId){
+  const val = document.getElementById(inputId).value.trim();
+  if (!val) return;
+  if (!(S.settings[key]||[]).includes(val)){
+    S.settings[key] = [...(S.settings[key]||[]), val];
+    renderListUI(key, 'list'+key.charAt(0).toUpperCase()+key.slice(1));
+    document.getElementById(inputId).value='';
+  }
+}
 
-  // Modal instances created once
-  projModal=new bootstrap.Modal(document.getElementById('projectModal'));
-  sessModal=new bootstrap.Modal(document.getElementById('sessionModal'));
-  document.getElementById('projModalClose').onclick=()=>projModal.hide();
-  document.getElementById('projCancelBtn').onclick =()=>projModal.hide();
-  document.getElementById('sessModalClose').onclick=()=>sessModal.hide();
-  document.getElementById('sessCancelBtn').onclick =()=>sessModal.hide();
+function removeListItem(key, val){
+  S.settings[key] = (S.settings[key]||[]).filter(x=>x!==val);
+  renderListUI(key, 'list'+key.charAt(0).toUpperCase()+key.slice(1));
+}
 
-  // Default dates
-  const td=today();
-  document.getElementById('dashDate').value =td;
-  document.getElementById('dashMonth').value=td.substring(0,7);
+async function saveSettings(){
+  S.settings.company  = document.getElementById('setCompany').value.trim() || 'PSS Engineering';
+  S.settings.currency = document.getElementById('setCurrency').value.trim() || '₹';
 
-  // Clock
-  tick(); setInterval(tick,1000);
+  if (CONFIGURED && db) {
+    await db.collection('settings').doc('main').set(S.settings, {merge:true});
+    alert('Settings saved and synced!');
+  } else {
+    alert('Settings saved locally (offline mode).');
+  }
+}
 
-  // If any timer was running when page was closed, resume master tick
-  if(S.activeTimers.some(t=>t.state==='running')) startMasterTick();
+/* ═══════════════════════════════════════════════════════════════
+   HELPERS
+═══════════════════════════════════════════════════════════════ */
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') }
 
-  // Render everything
-  renderSlots();
-  renderTodaySessions();
-});
+function populateSelect(id, opts, selected){
+  const el = document.getElementById(id);
+  el.innerHTML='';
+  (opts||[]).forEach(o=>{
+    const opt=document.createElement('option');
+    opt.value=o; opt.textContent=o;
+    if(o===selected) opt.selected=true;
+    el.appendChild(opt);
+  });
+}
+
+function populateProjectDropdowns(){
+  const slotSel = document.getElementById('slotProject');
+  slotSel.innerHTML='<option value="">-- Select Project --</option>';
+  S.projects.forEach(p=>{
+    const o=document.createElement('option');
+    o.value=p.id; o.textContent=`${p.num} – ${p.name}`;
+    slotSel.appendChild(o);
+  });
+
+  populateSelect('slotCategory', S.settings.workCategories, S.settings.workCategories?.[0]||'');
+}
 </script>
 </body>
 </html>
