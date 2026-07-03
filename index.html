@@ -324,7 +324,12 @@
 
       <!-- project summary table -->
       <div class="chart-wrap">
-        <h6 class="fw-semibold mb-3">Project Breakdown</h6>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h6 class="fw-semibold mb-0">Project Breakdown</h6>
+          <button class="btn btn-outline-success btn-sm" onclick="downloadDashboardExcel()">
+            <i class="bi bi-file-earmark-excel me-1"></i>Download Excel
+          </button>
+        </div>
         <div class="table-responsive">
           <table class="table table-sm table-hover align-middle mb-0" id="summaryTable">
             <thead class="table-light">
@@ -527,6 +532,45 @@
   </div>
 </div>
 
+<!-- Interrupted Timer Modal -->
+<div class="modal fade" id="interruptedModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#e65100,#bf360c);color:white;border-radius:.5rem .5rem 0 0">
+        <h5 class="modal-title fw-bold"><i class="bi bi-exclamation-triangle-fill me-2"></i>Interrupted Timer Found</h5>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted mb-3" style="font-size:.87rem">
+          This timer was running when the page closed or the connection was lost. We recovered the time recorded.
+        </p>
+        <div class="d-flex justify-content-between align-items-center mb-3 p-3 rounded" style="background:#fff3cd;border:1px solid #ffc107">
+          <div>
+            <div class="fw-semibold" id="intProjName"></div>
+            <div class="text-muted" id="intCategory" style="font-size:.83rem"></div>
+          </div>
+          <div class="text-end">
+            <div class="fw-bold" style="font-size:1.5rem;color:#e65100" id="intDuration"></div>
+            <div class="text-muted" style="font-size:.75rem">time recorded</div>
+          </div>
+        </div>
+        <label class="form-label fw-semibold">Work Notes <span class="text-muted fw-normal">(optional)</span></label>
+        <textarea id="intNotes" class="form-control" rows="3" placeholder="What were you working on before disconnection?"></textarea>
+      </div>
+      <div class="modal-footer flex-wrap gap-2">
+        <button class="btn btn-outline-danger btn-sm" onclick="handleInterrupted('discard')">
+          <i class="bi bi-trash me-1"></i>Discard
+        </button>
+        <button class="btn btn-outline-primary" onclick="handleInterrupted('resume')">
+          <i class="bi bi-play-fill me-1"></i>Resume Timer
+        </button>
+        <button class="btn btn-success" onclick="handleInterrupted('save')">
+          <i class="bi bi-check-circle me-1"></i>Save Session
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ════════════════════════════════════════════════════════════════
      BOOTSTRAP JS
 ════════════════════════════════════════════════════════════════ -->
@@ -590,7 +634,12 @@ let barChart     = null;
 let pieChart     = null;
 
 // Bootstrap modal instances
-let projModal, sessModal, stopModal;
+let projModal, sessModal, stopModal, interruptedModal;
+
+// Interrupted timer recovery queue
+let interruptedQueue = [];
+let currentInterruptedId = null;
+let autoSaveTick = 0;
 
 /* Admin / boss identity */
 const ADMIN_EMAIL = 'prasad.rssaj@gmail.com';
@@ -724,9 +773,10 @@ function setSyncStatus(online){
 ═══════════════════════════════════════════════════════════════ */
 window.addEventListener('DOMContentLoaded', ()=>{
   // Bootstrap modals — create once
-  projModal = new bootstrap.Modal(document.getElementById('projectModal'));
-  sessModal = new bootstrap.Modal(document.getElementById('sessionModal'));
-  stopModal = new bootstrap.Modal(document.getElementById('stopNotesModal'));
+  projModal        = new bootstrap.Modal(document.getElementById('projectModal'));
+  sessModal        = new bootstrap.Modal(document.getElementById('sessionModal'));
+  stopModal        = new bootstrap.Modal(document.getElementById('stopNotesModal'));
+  interruptedModal = new bootstrap.Modal(document.getElementById('interruptedModal'));
 
   document.getElementById('projModalClose').onclick = ()=>projModal.hide();
   document.getElementById('projCancelBtn').onclick  = ()=>projModal.hide();
@@ -856,17 +906,106 @@ function tickAll(){
     const el = document.getElementById('td-'+t.id);
     if (el) el.textContent = secsToHMS(getElapsed(t));
   });
+  // Auto-save elapsed to localStorage every 30 seconds
+  // This ensures minimal data loss on page close / network drop
+  autoSaveTick++;
+  if (autoSaveTick >= 30){
+    autoSaveTick = 0;
+    const now = Date.now();
+    activeTimers.forEach(t=>{
+      if (t.state==='running' && t.lastStart){
+        t.elapsed   = (t.elapsed||0) + Math.floor((now - t.lastStart)/1000);
+        t.lastStart = now;
+      }
+    });
+    saveTimers();
+  }
 }
 
 function restoreTimers(){
   if (!activeTimers.length) { renderSlots(); return; }
-  // Re-attach lastStart to now for any that were running on page reload
+  const now = Date.now();
+  interruptedQueue = [];
+
   activeTimers.forEach(t=>{
-    if (t.state==='running') t.lastStart = Date.now();
+    if (t.state==='running' && t.lastStart){
+      // Recover all elapsed time since last auto-save (up to ~30s max loss)
+      t.elapsed   = (t.elapsed||0) + Math.floor((now - t.lastStart)/1000);
+      t.lastStart = null;
+      t.state     = 'paused';  // Hold as paused — let user decide
+      interruptedQueue.push(t.id);
+    }
   });
+
   saveTimers();
+  // Only start master tick if some timers are still actively running
   if (activeTimers.some(t=>t.state==='running')) startMasterTick();
   renderSlots();
+
+  // Prompt user for each interrupted timer (after projects load)
+  if (interruptedQueue.length) {
+    // Small delay so Firestore project listener has time to populate S.projects
+    setTimeout(showNextInterrupted, 1500);
+  }
+}
+
+function showNextInterrupted(){
+  if (!interruptedQueue.length) return;
+  currentInterruptedId = interruptedQueue.shift();
+  const t = activeTimers.find(x=>x.id===currentInterruptedId);
+  if (!t){ showNextInterrupted(); return; }
+
+  const proj = S.projects.find(p=>p.id===t.projectId);
+  document.getElementById('intProjName').textContent = proj ? `${proj.num} – ${proj.name}` : 'Unknown Project';
+  document.getElementById('intCategory').textContent  = t.category || '';
+  document.getElementById('intDuration').textContent  = secsToHMS(t.elapsed||0);
+  document.getElementById('intNotes').value = '';
+  interruptedModal.show();
+}
+
+async function handleInterrupted(action){
+  const t = activeTimers.find(x=>x.id===currentInterruptedId);
+  if (!t){ interruptedModal.hide(); setTimeout(showNextInterrupted,400); return; }
+
+  if (action==='save'){
+    const notes    = document.getElementById('intNotes').value.trim();
+    const totalSec = t.elapsed||0;
+    if (totalSec > 0){
+      const session = {
+        projectId  : t.projectId,
+        category   : t.category||'',
+        notes,
+        userId     : currentUser.uid,
+        userName   : currentUserName,
+        userEmail  : currentUser.email||'',
+        startTime  : t.sessionStart || new Date(Date.now()-totalSec*1000).toISOString(),
+        endTime    : new Date().toISOString(),
+        duration   : totalSec,
+        date       : todayStr(),
+        interrupted: true,
+        createdAt  : CONFIGURED ? firebase.firestore.FieldValue.serverTimestamp() : new Date().toISOString()
+      };
+      if (CONFIGURED && db){
+        try { await db.collection('sessions').add(session); } catch(e){ console.error('interrupted save',e); }
+      } else {
+        S.sessions.push({...session, id:Date.now().toString()});
+      }
+    }
+    activeTimers = activeTimers.filter(x=>x.id!==currentInterruptedId);
+    saveTimers(); renderSlots();
+
+  } else if (action==='resume'){
+    t.state     = 'running';
+    t.lastStart = Date.now();
+    saveTimers(); renderSlots(); startMasterTick();
+
+  } else { // discard
+    activeTimers = activeTimers.filter(x=>x.id!==currentInterruptedId);
+    saveTimers(); renderSlots();
+  }
+
+  interruptedModal.hide();
+  setTimeout(showNextInterrupted, 500);
 }
 
 function addSlot(){
@@ -1452,6 +1591,95 @@ function populateSelect(id, opts, selected){
     if(o===selected) opt.selected=true;
     el.appendChild(opt);
   });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   EXCEL / CSV DOWNLOAD
+═══════════════════════════════════════════════════════════════ */
+async function downloadDashboardExcel(){
+  const period   = document.getElementById('dashPeriod').value;
+  const year     = parseInt(document.getElementById('dashYear').value);
+  const month    = parseInt(document.getElementById('dashMonth').value);
+  const projFilt = document.getElementById('dashProjFilter')?.value || 'all';
+
+  let startDate, endDate;
+  if (period==='today'){
+    startDate = endDate = todayStr();
+  } else if (period==='week'){
+    const d=new Date(); d.setDate(d.getDate()-d.getDay());
+    startDate=d.toISOString().slice(0,10); endDate=todayStr();
+  } else {
+    startDate=`${year}-${String(month+1).padStart(2,'0')}-01`;
+    endDate=new Date(year,month+1,0).toISOString().slice(0,10);
+  }
+
+  // Fetch sessions
+  let sessions=[];
+  if (CONFIGURED && db){
+    const snap=await db.collection('sessions').where('date','>=',startDate).where('date','<=',endDate).get().catch(()=>({docs:[]}));
+    sessions=snap.docs.map(d=>({id:d.id,...d.data()}));
+  } else {
+    sessions=S.sessions.filter(s=>s.date>=startDate&&s.date<=endDate);
+  }
+  if (!isAdmin()) sessions=sessions.filter(s=>s.userEmail!==ADMIN_EMAIL);
+  if (projFilt!=='all') sessions=sessions.filter(s=>s.projectId===projFilt);
+
+  // ── Sheet 1: Session details ──────────────────────────────
+  const sessRows=[['Date','Project No.','Project Name','Category','User','Start','End','Duration (hrs)','Notes']];
+  sessions.forEach(s=>{
+    const proj=S.projects.find(p=>p.id===s.projectId);
+    sessRows.push([
+      s.date||'',
+      proj?proj.num:'',
+      proj?proj.name:'Unknown',
+      s.category||'',
+      s.userName||'',
+      s.startTime?new Date(s.startTime).toLocaleString('en-IN'):'',
+      s.endTime  ?new Date(s.endTime).toLocaleString('en-IN'):'',
+      ((s.duration||0)/3600).toFixed(2),
+      s.notes||''
+    ]);
+  });
+
+  // ── Sheet 2: Project summary ──────────────────────────────
+  const projMap={};
+  sessions.forEach(s=>{
+    if (!projMap[s.projectId]) projMap[s.projectId]={secs:0,count:0,users:{}};
+    projMap[s.projectId].secs+=s.duration||0;
+    projMap[s.projectId].count+=1;
+    const u=s.userName||'?';
+    projMap[s.projectId].users[u]=(projMap[s.projectId].users[u]||0)+(s.duration||0)/3600;
+  });
+
+  const sumRows=[['Project No.','Project Name','Total Hours','Sessions','Budget Hours','Progress %','Team Breakdown']];
+  S.projects.filter(p=>projMap[p.id]).forEach(p=>{
+    const pm=projMap[p.id];
+    const hrs=(pm.secs/3600).toFixed(2);
+    const pct=p.plannedHours?Math.round(hrs/p.plannedHours*100):'';
+    const team=Object.entries(pm.users).map(([n,h])=>`${n}: ${h.toFixed(1)}h`).join('; ');
+    sumRows.push([p.num,p.name,hrs,pm.count,p.plannedHours||'',pct,team]);
+  });
+
+  // Build CSV with two sections separated by blank line
+  const csvLine=row=>row.map(c=>`"${String(c||'').replace(/"/g,'""')}"`).join(',');
+  const csv=[
+    `PSS Time Tracker Export — ${startDate} to ${endDate}`,
+    '',
+    '=== SESSION LOG ===',
+    ...sessRows.map(csvLine),
+    '',
+    '=== PROJECT SUMMARY ===',
+    ...sumRows.map(csvLine)
+  ].join('\n');
+
+  const blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`PSS_Dashboard_${startDate}_to_${endDate}.csv`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function populateProjectDropdowns(){
