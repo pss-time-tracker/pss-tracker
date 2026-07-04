@@ -509,7 +509,7 @@
 </div>
 
 <!-- Stop + Notes Modal -->
-<div class="modal fade" id="stopNotesModal" tabindex="-1" data-bs-backdrop="static">
+<div class="modal fade" id="stopNotesModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header notes-modal-header">
@@ -531,6 +531,9 @@
           placeholder="Brief description of work completed in this session…"></textarea>
       </div>
       <div class="modal-footer">
+        <button class="btn btn-outline-danger btn-sm me-auto" onclick="cancelStop()">
+          <i class="bi bi-arrow-counterclockwise me-1"></i>Resume Timer
+        </button>
         <button class="btn btn-outline-secondary btn-sm" onclick="saveStop(true)">
           <i class="bi bi-skip-forward me-1"></i>Skip Notes
         </button>
@@ -548,6 +551,19 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
+/* ── Connection monitoring — registered once at module load ─── */
+window.addEventListener('online', ()=>{
+  isOnline = true;
+  setSyncStatus(true);
+  showToast('Back online — syncing sessions…', 'info');
+  syncOfflineQueue();
+});
+window.addEventListener('offline', ()=>{
+  isOnline = false;
+  setSyncStatus(false);
+  showToast('You are offline — timers continue, sessions will sync when reconnected', 'warning');
+});
+
 /* ═══════════════════════════════════════════════════════════════
    FIREBASE CONFIG  ← Paste your config here
 ═══════════════════════════════════════════════════════════════ */
@@ -729,7 +745,7 @@ function setupListeners(){
     populateProjectDropdowns();
   }, err=>console.warn('cfg listener',err));
 
-  setSyncStatus(true);
+  if (navigator.onLine) setSyncStatus(true);
 }
 
 function teardownListeners(){
@@ -878,6 +894,9 @@ function onUserReady(){
   document.getElementById('appShell').classList.remove('d-none');
   document.getElementById('userNameDisplay').textContent = currentUserName;
 
+  // Set sync indicator immediately based on actual network state
+  setSyncStatus(navigator.onLine);
+
   if (!CONFIGURED) {
     document.getElementById('setupBanner').style.display = 'block';
     setSyncStatus(false);
@@ -894,19 +913,6 @@ function onUserReady(){
   setupListeners();
   restoreTimers();
   showPage('timer');
-
-  // ── Connection monitoring ───────────────────────────────────
-  window.addEventListener('online', ()=>{
-    isOnline = true;
-    setSyncStatus(true);
-    showToast('Back online — syncing sessions…', 'info');
-    syncOfflineQueue();
-  });
-  window.addEventListener('offline', ()=>{
-    isOnline = false;
-    setSyncStatus(false);
-    showToast('You are offline — timers continue, sessions will sync when reconnected', 'warning');
-  });
 
   // Sync any queued sessions from a previous offline session
   if (navigator.onLine) syncOfflineQueue();
@@ -1199,6 +1205,20 @@ function resetSlot(id){
   const t = activeTimers.find(x=>x.id===id);
   if (t){ t.state='stopped'; t.elapsed=0; t.lastStart=null; t.sessionStart=null; }
   saveTimers(); renderSlots();
+}
+
+// Cancel stop — user changed their mind, resume the timer from where it was
+function cancelStop(){
+  if (!pendingStop) { stopModal.hide(); return; }
+  const t = activeTimers.find(x=>x.id===pendingStop.slotId);
+  if (t){
+    // elapsed is already accumulated from when Stop was clicked — just resume
+    t.state     = 'running';
+    t.lastStart = Date.now();
+    saveTimers(); renderSlots(); startMasterTick();
+  }
+  stopModal.hide();
+  pendingStop = null;
 }
 
 function removeSlot(id){
