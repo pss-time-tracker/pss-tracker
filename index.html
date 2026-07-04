@@ -767,6 +767,7 @@ function setupListeners(){
     S.projects = snap.docs.map(d=>({id:d.id,...d.data()}));
     renderProjects();
     renderSlots();
+    renderRemoteTimers();  // refresh project names on remote timer cards
     populateProjectDropdowns();
   }, err=>console.warn('proj listener',err));
 
@@ -788,7 +789,10 @@ function setupListeners(){
     // keep master tick alive if remote timers are running
     if (liveTimers.some(lt => lt.state === 'running')) startMasterTick();
     else checkStopMaster();
-  }, err => console.warn('liveTimers listener', err));
+  }, err => {
+    console.warn('liveTimers listener', err);
+    showToast('⚠ Team timer sync failed — check Firestore rules for liveTimers collection', 'danger');
+  });
 
   if (navigator.onLine) setSyncStatus(true);
 }
@@ -1066,8 +1070,8 @@ function restoreTimers(){
       showToast(`▶ ${resumed} timer${resumed>1?'s':''} resumed — no time lost`, 'info')
     , 800);
   }
-  // Re-broadcast running timers to Firestore so other devices see them
-  activeTimers.filter(t=>t.state==='running').forEach(t=>syncTimerToFirestore(t));
+  // Re-broadcast running + paused timers to Firestore so other devices see them
+  activeTimers.filter(t=>t.state==='running'||t.state==='paused').forEach(t=>syncTimerToFirestore(t));
 }
 
 function addSlot(){
@@ -1165,7 +1169,7 @@ function pauseSlot(id){
   t.lastStart = null;
   t.state = 'paused';
   saveTimers(); renderSlots(); checkStopMaster();
-  removeFirestoreTimer(t);  // take off the live board when paused
+  syncTimerToFirestore(t);  // keep on live board as paused — other devices can still see & take over
 }
 
 function stopSlot(id){
@@ -1399,15 +1403,16 @@ async function takeoverTimer(firestoreDocId){
     showToast("You can only take over your own timers.", 'warning'); return;
   }
 
-  const elapsed = getElapsedCrossDevice(lt);
-  const id      = Date.now().toString();
-  const newSlot = {
+  const elapsed   = getElapsedCrossDevice(lt);
+  const id        = Date.now().toString();
+  const isRunning = lt.state === 'running';
+  const newSlot   = {
     id,
     projectId   : lt.projectId,
     category    : lt.category || '',
-    state       : 'running',
+    state       : isRunning ? 'running' : 'paused',
     elapsed     : elapsed,
-    lastStart   : Date.now(),
+    lastStart   : isRunning ? Date.now() : null,
     sessionStart: lt.sessionStart || new Date(Date.now() - elapsed*1000).toISOString()
   };
 
@@ -1417,10 +1422,11 @@ async function takeoverTimer(firestoreDocId){
   activeTimers.push(newSlot);
   saveTimers();
   renderSlots();
-  startMasterTick();
+  if (isRunning) startMasterTick();
   // Sync new slot to Firestore under this device
   await syncTimerToFirestore(newSlot);
-  showToast('Timer moved to this device ✓', 'success');
+  const stateLabel = isRunning ? 'running' : 'paused';
+  showToast(`Timer (${stateLabel}) moved to this device ✓`, 'success');
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1582,8 +1588,9 @@ async function renderSessionLog(){
 
   let sessions = [];
   if (CONFIGURED && db) {
-    const snap = await db.collection('sessions').where('date','==',dateVal).orderBy('createdAt','desc').get()
-      .catch(()=>db.collection('sessions').where('date','==',dateVal).get());
+    // orderBy('createdAt','desc') requires a composite index — client-sort as safety net
+    const snap = await db.collection('sessions').where('date','==',dateVal).get()
+      .catch(()=>({docs:[]}));
     sessions = snap.docs.map(d=>({id:d.id,...d.data()}));
   } else {
     sessions = S.sessions.filter(s=>s.date===dateVal);
@@ -1593,6 +1600,13 @@ async function renderSessionLog(){
 
   // Non-admins cannot see boss's sessions
   if (!isAdmin()) sessions = sessions.filter(s=>s.userEmail !== ADMIN_EMAIL);
+
+  // Sort latest first (by actual session start time, fallback to endTime)
+  sessions.sort((a,b)=>{
+    const ta = a.startTime ? new Date(a.startTime) : new Date(a.endTime||0);
+    const tb = b.startTime ? new Date(b.startTime) : new Date(b.endTime||0);
+    return tb - ta;
+  });
 
   if (!sessions.length){ noMsg.classList.remove('d-none'); return; }
   noMsg.classList.add('d-none');
