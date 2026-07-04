@@ -616,8 +616,9 @@ let unsubSess      = null;
 let unsubCfg       = null;
 let unsubLive      = null;
 
-// Live timers from other devices (Firestore liveTimers collection)
+// Live timers from OTHER users (Firestore liveTimers collection) — shown in "Team Running Now"
 let liveTimers     = [];
+const importingIds = new Set(); // guard against duplicate auto-import
 
 // State that comes from Firestore
 let S = {
@@ -781,12 +782,24 @@ function setupListeners(){
 
   // Live timers — cross-device real-time visibility
   unsubLive = db.collection('liveTimers').onSnapshot(snap => {
-    liveTimers = snap.docs
-      .map(d => ({ id: d.id, ...d.data() }))
-      .filter(lt => lt.deviceId !== DEVICE_ID)             // exclude this device's own entries
-      .filter(lt => isAdmin() || lt.userEmail !== ADMIN_EMAIL); // hide boss from non-admins
+    const allDocs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // 1. If any of our active timers' Firestore docs were deleted by another device → remove locally
+    detectClaimedTimers(allDocs);
+
+    // 2. Own timers from OTHER devices → auto-import as Active Timers
+    const myOtherDeviceTimers = allDocs.filter(lt =>
+      lt.userId === currentUser?.uid && lt.deviceId !== DEVICE_ID
+    );
+    autoImportMyTimers(myOtherDeviceTimers);
+
+    // 3. Other users' timers → show in "Team Running Now" (read-only)
+    liveTimers = allDocs.filter(lt =>
+      lt.userId !== currentUser?.uid &&
+      (isAdmin() || lt.userEmail !== ADMIN_EMAIL)
+    );
+
     renderRemoteTimers();
-    // keep master tick alive if remote timers are running
     if (liveTimers.some(lt => lt.state === 'running')) startMasterTick();
     else checkStopMaster();
   }, err => {
@@ -1349,6 +1362,64 @@ async function removeFirestoreTimer(t){
   catch(e){ console.warn('liveTimers remove failed', e); }
 }
 
+/* Detect if any local timer's Firestore doc was deleted (claimed by another device) */
+function detectClaimedTimers(allDocs){
+  const liveDocIds = new Set(allDocs.map(d => d.id));
+  const claimed = activeTimers.filter(t => t.firestoreId && !liveDocIds.has(t.firestoreId));
+  if (!claimed.length) return;
+
+  const claimedIds = new Set(claimed.map(t => t.id));
+  activeTimers = activeTimers.filter(t => !claimedIds.has(t.id));
+  saveTimers();
+  renderSlots();
+  checkStopMaster();
+  showToast('Timer moved to your other device', 'info');
+}
+
+/* Auto-import own timers from other devices as local Active Timers */
+async function autoImportMyTimers(remoteTimers){
+  const toImport = remoteTimers.filter(lt =>
+    !activeTimers.find(t => t.firestoreId === lt.id) && !importingIds.has(lt.id)
+  );
+  if (!toImport.length) return;
+
+  toImport.forEach(lt => importingIds.add(lt.id));
+  let imported = 0;
+
+  for (const lt of toImport){
+    try {
+      const elapsed = getElapsedCrossDevice(lt);
+      const newSlot = {
+        id          : Date.now().toString() + '_' + Math.random().toString(36).slice(2, 5),
+        projectId   : lt.projectId,
+        category    : lt.category || '',
+        state       : lt.state,
+        elapsed     : elapsed,
+        lastStart   : lt.state === 'running' ? Date.now() : null,
+        sessionStart: lt.sessionStart || null
+        // firestoreId set by syncTimerToFirestore below
+      };
+      // Delete old device's doc — this triggers detectClaimedTimers on that device → stops its timer
+      await db.collection('liveTimers').doc(lt.id).delete();
+      activeTimers.push(newSlot);
+      // Publish under this device so others see updated owner
+      await syncTimerToFirestore(newSlot);
+      imported++;
+    } catch(e){
+      console.warn('Auto-import failed', e);
+    } finally {
+      importingIds.delete(lt.id);
+    }
+  }
+
+  if (imported){
+    saveTimers();
+    renderSlots();
+    if (activeTimers.some(t => t.state === 'running')) startMasterTick();
+    showToast(`▶ ${imported} timer${imported>1?'s':''} moved from your other device`, 'info');
+  }
+}
+
 /* Render the "Team Running Now" section from liveTimers */
 function renderRemoteTimers(){
   const cont    = document.getElementById('remoteTimersContainer');
@@ -1363,7 +1434,6 @@ function renderRemoteTimers(){
   visible.forEach(lt => {
     const proj    = S.projects.find(p => p.id === lt.projectId);
     const elapsed = secsToHMS(getElapsedCrossDevice(lt));
-    const isOwn   = lt.userId === currentUser?.uid;
     const col     = lt.state === 'running' ? 'var(--success)' : 'var(--warning)';
     const icon    = lt.state === 'running' ? 'bi-play-circle-fill' : 'bi-pause-circle-fill';
     const projNum = proj?.num || '';
@@ -1386,10 +1456,6 @@ function renderRemoteTimers(){
           <div class="slot-project-num text-muted">${esc(subline)}</div>
         </div>
         <div id="rtd-${lt.id}" class="timer-display" style="font-size:1.8rem;color:${col}">${elapsed}</div>
-        <div class="d-flex gap-2">
-          ${isOwn ? `<button class="btn btn-primary btn-sm" onclick="takeoverTimer('${lt.id}')">
-            <i class="bi bi-arrow-down-circle-fill me-1"></i>Use Here</button>` : ''}
-        </div>
       </div>`;
     cont.appendChild(div);
   });
