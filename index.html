@@ -430,7 +430,7 @@
       </button>
 
       <!-- Admin-only: Data Management -->
-      <div id="adminDataSection" class="setting-section d-none mt-4">
+      <div id="adminDataSection" class="setting-section mt-4" style="display:none">
         <h6><i class="bi bi-database-gear me-1"></i>Data Management
           <span class="badge bg-danger ms-1" style="font-size:.7rem">Admin Only</span>
         </h6>
@@ -458,12 +458,26 @@
         </div>
 
         <div>
-          <div class="fw-semibold text-danger mb-2">Danger Zone</div>
-          <button class="btn btn-danger btn-sm" onclick="clearAllLogs()">
-            <i class="bi bi-trash3-fill me-1"></i>Clear ALL Log Data
-          </button>
-          <div class="text-muted mt-1" style="font-size:.8rem">
-            Permanently deletes every session for every user. Cannot be undone.
+          <div class="fw-semibold text-danger mb-2">Danger Zone — Clear Session Logs</div>
+          <div class="d-flex flex-wrap gap-2 mb-2">
+            <button class="btn btn-outline-danger btn-sm" onclick="clearLogsByPeriod('1month')">
+              <i class="bi bi-trash3 me-1"></i>Last 1 Month
+            </button>
+            <button class="btn btn-outline-danger btn-sm" onclick="clearLogsByPeriod('3months')">
+              <i class="bi bi-trash3 me-1"></i>Last 3 Months
+            </button>
+            <button class="btn btn-outline-danger btn-sm" onclick="clearLogsByPeriod('6months')">
+              <i class="bi bi-trash3 me-1"></i>Last 6 Months
+            </button>
+            <button class="btn btn-outline-danger btn-sm" onclick="clearLogsByPeriod('1year')">
+              <i class="bi bi-trash3 me-1"></i>Last 1 Year
+            </button>
+            <button class="btn btn-danger btn-sm" onclick="clearLogsByPeriod('all')">
+              <i class="bi bi-trash3-fill me-1"></i>Clear ALL
+            </button>
+          </div>
+          <div class="text-muted" style="font-size:.8rem">
+            Permanently deletes sessions for all users in the chosen period. Cannot be undone.
           </div>
         </div>
       </div>
@@ -608,9 +622,10 @@
           </div>
           <div class="text-end">
             <input type="text" id="stopDuration" class="form-control text-center fw-bold text-primary p-1"
-              style="font-size:1.35rem;width:120px;border:1.5px dashed var(--pl);border-radius:8px"
-              placeholder="HH:MM:SS" title="Click to edit duration">
+              style="font-size:1.35rem;width:130px;border:2px dashed var(--pl);border-radius:8px"
+              placeholder="HH:MM:SS" title="Edit to change duration" oninput="onDurationEdit()">
             <div class="text-muted" style="font-size:.78rem">duration (tap to edit)</div>
+            <div id="stopEndPreview" class="text-muted mt-1" style="font-size:.78rem"></div>
           </div>
         </div>
         <label class="form-label fw-semibold">Notes / Work Done <span class="text-muted fw-normal">(optional)</span></label>
@@ -1029,7 +1044,8 @@ function onUserReady(){
 
   // Show admin-only UI elements
   const adminOnly = isAdmin();
-  document.getElementById('addProjBtn').style.display  = adminOnly ? '' : 'none';
+  document.getElementById('addProjBtn').style.display       = adminOnly ? '' : 'none';
+  document.getElementById('adminDataSection').style.display = adminOnly ? '' : 'none';
   // Non-admins only see their own time (no "All Team" toggle)
   document.getElementById('dashViewAll').style.display = adminOnly ? '' : 'none';
   document.getElementById('dashViewMe').style.display  = adminOnly ? '' : 'none';
@@ -1289,6 +1305,11 @@ function stopSlot(id){
   document.getElementById('stopCategory').textContent = t.category || '';
   document.getElementById('stopDuration').value = secsToHMS(totalSecs);
   document.getElementById('stopNotes').value = '';
+  // Show initial start → end preview
+  const sISO = pendingStop.startISO;
+  const eISO = new Date(new Date(sISO).getTime() + totalSecs * 1000).toISOString();
+  const fmt  = d => new Date(d).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+  document.getElementById('stopEndPreview').textContent = `${fmt(sISO)} → ${fmt(eISO)}`;
 
   // Small delay ensures DOM settles before modal opens
   setTimeout(()=>{
@@ -1299,10 +1320,12 @@ function stopSlot(id){
 
 async function saveStop(skipNotes){
   if (!pendingStop) return;
-  const {slotId, totalSecs: originalSecs, projectId, startISO, category} = pendingStop;
+  // pendingStop.totalSecs is updated live by onDurationEdit() as user types;
+  // also re-read input as final safety fallback
+  const {slotId, projectId, startISO, category} = pendingStop;
   const editedStr  = document.getElementById('stopDuration').value.trim();
   const editedSecs = hmsToSecs(editedStr);
-  const totalSecs  = (editedSecs !== null && editedSecs > 0) ? editedSecs : originalSecs;
+  const totalSecs  = (editedSecs !== null && editedSecs > 0) ? editedSecs : pendingStop.totalSecs;
   const notes   = skipNotes ? '' : document.getElementById('stopNotes').value.trim();
   const endISO  = new Date(new Date(startISO).getTime() + totalSecs * 1000).toISOString();
   const dateStr = endISO.slice(0, 10);
@@ -1935,7 +1958,7 @@ function renderSettingsUI(){
   renderListUI('workCategories','listWorkCategories');
 
   // Show data management section only for admin
-  document.getElementById('adminDataSection').classList.toggle('d-none', !isAdmin());
+  document.getElementById('adminDataSection').style.display = isAdmin() ? '' : 'none';
 }
 
 function renderListUI(key, containerId){
@@ -2149,27 +2172,51 @@ async function exportAllLogs(period){
   }
 }
 
-/* ── Admin: Clear ALL session logs from Firestore ── */
-async function clearAllLogs(){
+/* ── Duration edit in stop modal: update pendingStop + live preview ── */
+function onDurationEdit(){
+  if (!pendingStop) return;
+  const str  = document.getElementById('stopDuration').value.trim();
+  const secs = hmsToSecs(str);
+  if (secs !== null && secs > 0){
+    pendingStop.totalSecs = secs;
+    const endTime = new Date(new Date(pendingStop.startISO).getTime() + secs * 1000);
+    const fmt = d => new Date(d).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+    document.getElementById('stopEndPreview').textContent =
+      `${fmt(pendingStop.startISO)} → ${fmt(endTime)}`;
+  }
+}
+
+/* ── Admin: Clear session logs for chosen period ── */
+async function clearLogsByPeriod(period){
   if (!isAdmin()){ showToast('Admin only', 'danger'); return; }
-  if (!confirm('⚠️ This will permanently delete ALL session logs for ALL users.\n\nThis CANNOT be undone.\n\nClick OK to continue.')) return;
-  const typed = prompt('Type  YES  to confirm permanent deletion of all logs:');
+  const labels = {'1month':'last 1 month','3months':'last 3 months','6months':'last 6 months','1year':'last 1 year','all':'ALL TIME'};
+  const label  = labels[period] || period;
+  if (!confirm(`⚠️ This will permanently delete ALL session logs for ${label} for ALL users.\n\nThis CANNOT be undone.`)) return;
+  const typed = prompt(`Type  YES  to confirm deletion of sessions for ${label}:`);
   if (typed?.trim() !== 'YES'){ showToast('Cancelled — type YES to confirm', 'info'); return; }
 
-  showToast('Deleting all sessions…', 'warning');
+  let startDate = null;
+  const now = new Date();
+  if (period === '1month')  { const d=new Date(now); d.setMonth(d.getMonth()-1);       startDate=d.toISOString().slice(0,10); }
+  if (period === '3months') { const d=new Date(now); d.setMonth(d.getMonth()-3);       startDate=d.toISOString().slice(0,10); }
+  if (period === '6months') { const d=new Date(now); d.setMonth(d.getMonth()-6);       startDate=d.toISOString().slice(0,10); }
+  if (period === '1year')   { const d=new Date(now); d.setFullYear(d.getFullYear()-1); startDate=d.toISOString().slice(0,10); }
+
+  showToast('Deleting sessions…', 'warning');
   try {
-    const snap  = await db.collection('sessions').get();
+    let q = db.collection('sessions');
+    if (startDate) q = q.where('date', '>=', startDate);
+    const snap  = await q.get();
     const total = snap.docs.length;
-    // Firestore batch limit = 500
     for (let i = 0; i < snap.docs.length; i += 500){
       const batch = db.batch();
       snap.docs.slice(i, i+500).forEach(doc => batch.delete(doc.ref));
       await batch.commit();
     }
-    showToast(`✓ ${total} sessions deleted`, 'success');
+    showToast(`✓ ${total} session${total!==1?'s':''} deleted (${label})`, 'success');
   } catch(e){
     showToast('Delete failed: '+e.message, 'danger');
-    console.error('clearAllLogs', e);
+    console.error('clearLogsByPeriod', e);
   }
 }
 
