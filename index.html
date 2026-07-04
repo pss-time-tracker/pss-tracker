@@ -236,19 +236,6 @@
         No active timers. Click <strong>Add Timer</strong> to start.
       </p>
 
-      <!-- Your own timers running on another device — shown with "Move Here" button -->
-      <div id="myDeviceTimersSection" class="d-none mt-4">
-        <div class="d-flex align-items-center justify-content-between mb-2">
-          <h6 class="mb-0 fw-semibold" style="color:var(--warning)">
-            <i class="bi bi-phone-fill me-1"></i>Your Timers on Another Device
-          </h6>
-          <button class="btn btn-warning btn-sm fw-semibold" onclick="moveAllHere()">
-            <i class="bi bi-arrow-down-circle-fill me-1"></i>Move All Here
-          </button>
-        </div>
-        <div id="myDeviceTimersContainer" class="d-flex flex-column gap-3"></div>
-      </div>
-
       <!-- Team running timers from other devices / users (live from Firestore) -->
       <div id="remoteTimersSection" class="d-none mt-4">
         <div class="d-flex align-items-center gap-2 mb-2">
@@ -630,11 +617,7 @@ let unsubCfg       = null;
 let unsubLive      = null;
 
 // Live timers from OTHER users — shown read-only in "Team Running Now"
-let liveTimers      = [];
-// Own timers detected on another device — shown in "Your Timers on Another Device"
-let myDeviceTimers  = [];
-// ProjectIds recently moved away from this device — prevents re-import loop
-const recentlyClaimed = new Set();
+let liveTimers = [];
 
 // State that comes from Firestore
 let S = {
@@ -784,7 +767,6 @@ function setupListeners(){
     S.projects = snap.docs.map(d=>({id:d.id,...d.data()}));
     renderProjects();
     renderSlots();
-    renderMyDeviceTimers();  // refresh project names now that they're loaded
     renderRemoteTimers();
     populateProjectDropdowns();
   }, err=>console.warn('proj listener',err));
@@ -797,33 +779,26 @@ function setupListeners(){
     populateProjectDropdowns();
   }, err=>console.warn('cfg listener',err));
 
-  // Live timers — cross-device real-time visibility
+  // Live timers — single source of truth for all devices
   unsubLive = db.collection('liveTimers').onSnapshot(snap => {
-    const allDocs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const allDocs = snap.docs.map(d => ({ firestoreId: d.id, ...d.data() }));
 
-    // 1. Detect if any of OUR local timers' Firestore docs were deleted (moved by us on another device)
-    detectMovedTimers(allDocs);
+    // Own timers (any device) → merge into local activeTimers
+    const mySlots = allDocs.filter(lt => lt.userId === currentUser?.uid);
+    syncMySlots(mySlots);
 
-    // 2. Own timers from other devices (not recently moved away) → prompt user to move here
-    myDeviceTimers = allDocs.filter(lt =>
-      lt.userId === currentUser?.uid &&
-      lt.deviceId !== DEVICE_ID &&
-      !recentlyClaimed.has(lt.projectId)
-    );
-
-    // 3. Other users' timers → read-only "Team Running Now"
+    // Other users' timers → read-only "Team Running Now"
     liveTimers = allDocs.filter(lt =>
       lt.userId !== currentUser?.uid &&
       (isAdmin() || lt.userEmail !== ADMIN_EMAIL)
     );
 
-    renderMyDeviceTimers();
     renderRemoteTimers();
-    const anyRemoteRunning = liveTimers.some(lt=>lt.state==='running') || myDeviceTimers.some(lt=>lt.state==='running');
-    if (anyRemoteRunning) startMasterTick(); else checkStopMaster();
+    if (liveTimers.some(lt => lt.state === 'running')) startMasterTick();
+    else checkStopMaster();
   }, err => {
     console.warn('liveTimers listener', err);
-    showToast('⚠ Team timer sync failed — check Firestore rules for liveTimers collection', 'danger');
+    showToast('⚠ Live sync error — check Firestore rules', 'danger');
   });
 
   if (navigator.onLine) setSyncStatus(true);
@@ -1047,8 +1022,7 @@ function stopMasterTick(){
 
 function checkStopMaster(){
   const anyRunning = activeTimers.some(t=>t.state==='running')
-    || liveTimers.some(lt=>lt.state==='running')
-    || myDeviceTimers.some(lt=>lt.state==='running');
+    || liveTimers.some(lt=>lt.state==='running');
   if (!anyRunning) stopMasterTick();
 }
 
@@ -1062,12 +1036,6 @@ function tickAll(){
   liveTimers.forEach(lt=>{
     if (lt.state!=='running') return;
     const el = document.getElementById('rtd-'+lt.id);
-    if (el) el.textContent = secsToHMS(getElapsedCrossDevice(lt));
-  });
-  // Tick "Your Timers on Another Device" displays
-  myDeviceTimers.forEach(lt=>{
-    if (lt.state!=='running') return;
-    const el = document.getElementById('mdt-'+lt.id);
     if (el) el.textContent = secsToHMS(getElapsedCrossDevice(lt));
   });
   // Auto-save elapsed to localStorage every 30 seconds
@@ -1388,109 +1356,67 @@ async function removeFirestoreTimer(t){
   catch(e){ console.warn('liveTimers remove failed', e); }
 }
 
-/* Detect if any of our local timers' Firestore docs were deleted (we moved them here from another device) */
-function detectMovedTimers(allDocs){
-  const liveDocIds = new Set(allDocs.map(d => d.id));
-  const moved = activeTimers.filter(t => t.firestoreId && !liveDocIds.has(t.firestoreId));
-  if (!moved.length) return;
+/* ── syncMySlots: Firestore is single source of truth for own timers ──────────────
+   Called every time liveTimers snapshot fires for THIS user's docs.
+   Merges Firestore state into local activeTimers — no ownership transfers,
+   no doc deletion, no infinite loops.                                              */
+function syncMySlots(firestoreSlots){
+  let changed = false;
+  const fsIds = new Set(firestoreSlots.map(fs => fs.firestoreId));
 
-  // Mark projectIds so the snapshot doesn't show them as "other device timers" and loop
-  moved.forEach(t => {
-    recentlyClaimed.add(t.projectId);
-    setTimeout(() => recentlyClaimed.delete(t.projectId), 10000);
+  firestoreSlots.forEach(fs => {
+    // Match by firestoreId first, then by projectId for newly-arrived slots
+    let local = activeTimers.find(t => t.firestoreId === fs.firestoreId)
+      || activeTimers.find(t => t.projectId === fs.projectId && !t.firestoreId);
+
+    if (local) {
+      // Don't clobber a timer we're currently stopping (pendingStop guard)
+      if (pendingStop && pendingStop.slotId === local.id) return;
+      const newLastStart = fs.lastStart ? new Date(fs.lastStart).getTime() : null;
+      // Only update if something actually changed
+      if (local.firestoreId !== fs.firestoreId ||
+          local.state       !== fs.state       ||
+          local.elapsed     !== (fs.elapsed||0)||
+          local.lastStart   !== newLastStart){
+        local.firestoreId = fs.firestoreId;
+        local.state       = fs.state;
+        local.elapsed     = fs.elapsed || 0;
+        local.lastStart   = newLastStart;
+        local.sessionStart= fs.sessionStart || local.sessionStart;
+        local.projectId   = fs.projectId;
+        local.category    = fs.category || '';
+        changed = true;
+      }
+    } else {
+      // Brand-new slot from another device — add it here
+      activeTimers.push({
+        id          : 'fs_' + fs.firestoreId,
+        firestoreId : fs.firestoreId,
+        projectId   : fs.projectId,
+        category    : fs.category || '',
+        state       : fs.state,
+        elapsed     : fs.elapsed || 0,
+        lastStart   : fs.lastStart ? new Date(fs.lastStart).getTime() : null,
+        sessionStart: fs.sessionStart || null
+      });
+      changed = true;
+    }
   });
 
-  // Remove from local active list — the other device now owns them
-  const movedIds = new Set(moved.map(t => t.id));
-  activeTimers = activeTimers.filter(t => !movedIds.has(t.id));
-  saveTimers(); renderSlots(); checkStopMaster();
-  showToast(`${moved.length} timer${moved.length>1?'s':''} moved to your other device`, 'info');
-}
+  // Remove local slots whose Firestore doc is gone (stopped on another device)
+  const before = activeTimers.length;
+  activeTimers = activeTimers.filter(t => {
+    if (!t.firestoreId) return true;                          // locally-only slot, keep
+    if (pendingStop && pendingStop.slotId === t.id) return true; // being stopped here, keep
+    return fsIds.has(t.firestoreId);                          // still alive in Firestore
+  });
+  if (activeTimers.length !== before) changed = true;
 
-/* User clicks "Move Here" — brings one timer from another device to this one */
-async function moveTimerHere(firestoreDocId){
-  const lt = myDeviceTimers.find(x => x.id === firestoreDocId);
-  if (!lt){ showToast('Timer no longer available', 'warning'); return; }
-
-  const elapsed = getElapsedCrossDevice(lt);
-  const newSlot = {
-    id          : Date.now().toString() + '_' + Math.random().toString(36).slice(2,5),
-    projectId   : lt.projectId,
-    category    : lt.category || '',
-    state       : lt.state,
-    elapsed     : elapsed,
-    lastStart   : lt.state === 'running' ? Date.now() : null,
-    sessionStart: lt.sessionStart || null
-  };
-
-  // Guard: mark projectId so detectMovedTimers on THIS device doesn't loop when snapshot refires
-  recentlyClaimed.add(lt.projectId);
-  setTimeout(() => recentlyClaimed.delete(lt.projectId), 10000);
-
-  try {
-    // Delete old device's doc → their detectMovedTimers fires → they remove local timer
-    await db.collection('liveTimers').doc(firestoreDocId).delete();
-    activeTimers.push(newSlot);
+  if (changed){
     saveTimers(); renderSlots();
-    if (lt.state === 'running') startMasterTick();
-    // Publish under this device
-    await syncTimerToFirestore(newSlot);
-    // Remove from pending list
-    myDeviceTimers = myDeviceTimers.filter(x => x.id !== firestoreDocId);
-    renderMyDeviceTimers();
-    showToast('Timer moved here ✓', 'success');
-  } catch(e){
-    recentlyClaimed.delete(lt.projectId);
-    showToast('Failed to move timer — try again', 'danger');
-    console.warn('moveTimerHere failed', e);
+    if (activeTimers.some(t => t.state === 'running')) startMasterTick();
+    else checkStopMaster();
   }
-}
-
-/* Move ALL own timers from other device to here */
-async function moveAllHere(){
-  const all = [...myDeviceTimers];
-  for (const lt of all) await moveTimerHere(lt.id);
-}
-
-/* Render "Your Timers on Another Device" section */
-function renderMyDeviceTimers(){
-  const cont    = document.getElementById('myDeviceTimersContainer');
-  const section = document.getElementById('myDeviceTimersSection');
-  if (!cont || !section) return;
-
-  const visible = myDeviceTimers.filter(lt => lt.state === 'running' || lt.state === 'paused');
-  if (!visible.length){ section.classList.add('d-none'); return; }
-  section.classList.remove('d-none');
-  cont.innerHTML = '';
-
-  visible.forEach(lt => {
-    const proj    = S.projects.find(p => p.id === lt.projectId);
-    const elapsed = secsToHMS(getElapsedCrossDevice(lt));
-    const col     = lt.state === 'running' ? 'var(--success)' : 'var(--warning)';
-    const icon    = lt.state === 'running' ? 'bi-play-circle-fill' : 'bi-pause-circle-fill';
-    const projNum = proj?.num || '';
-    const subline = lt.category ? `${projNum} · ${lt.category}` : projNum;
-
-    const div = document.createElement('div');
-    div.className = 'timer-slot';
-    div.id = 'mds-' + lt.id;
-    div.style.borderLeftColor = col;
-    div.innerHTML = `
-      <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
-        <div style="flex:1;min-width:0">
-          <div class="slot-project-name">${esc(proj ? proj.name : 'Unknown')}
-            <span class="badge bg-light border ms-2" style="font-size:.72rem;color:${col}">
-              <i class="bi ${icon}"></i> ${lt.state}
-            </span>
-          </div>
-          <div class="slot-project-num text-muted">${esc(subline)}</div>
-        </div>
-        <div id="mdt-${lt.id}" class="timer-display" style="font-size:1.8rem;color:${col}">${elapsed}</div>
-        <button class="btn btn-warning btn-sm fw-semibold" onclick="moveTimerHere('${lt.id}')">
-          <i class="bi bi-arrow-down-circle-fill me-1"></i>Move Here</button>
-      </div>`;
-    cont.appendChild(div);
-  });
 }
 
 /* Render the "Team Running Now" section from liveTimers */
@@ -1532,40 +1458,6 @@ function renderRemoteTimers(){
       </div>`;
     cont.appendChild(div);
   });
-}
-
-/* Claim a timer from another device — copies it to this device and resumes */
-async function takeoverTimer(firestoreDocId){
-  const lt = liveTimers.find(x => x.id === firestoreDocId);
-  if (!lt) return;
-  if (lt.userId !== currentUser?.uid){
-    showToast("You can only take over your own timers.", 'warning'); return;
-  }
-
-  const elapsed   = getElapsedCrossDevice(lt);
-  const id        = Date.now().toString();
-  const isRunning = lt.state === 'running';
-  const newSlot   = {
-    id,
-    projectId   : lt.projectId,
-    category    : lt.category || '',
-    state       : isRunning ? 'running' : 'paused',
-    elapsed     : elapsed,
-    lastStart   : isRunning ? Date.now() : null,
-    sessionStart: lt.sessionStart || new Date(Date.now() - elapsed*1000).toISOString()
-  };
-
-  // Remove the other device's Firestore entry
-  try { await db.collection('liveTimers').doc(firestoreDocId).delete(); } catch(e){}
-
-  activeTimers.push(newSlot);
-  saveTimers();
-  renderSlots();
-  if (isRunning) startMasterTick();
-  // Sync new slot to Firestore under this device
-  await syncTimerToFirestore(newSlot);
-  const stateLabel = isRunning ? 'running' : 'paused';
-  showToast(`Timer (${stateLabel}) moved to this device ✓`, 'success');
 }
 
 /* ═══════════════════════════════════════════════════════════════
