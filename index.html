@@ -733,15 +733,8 @@ async function forgotPwd(){
 
 async function doSignOut(){
   if (!confirm('Sign out?')) return;
-  // Clean up this device's live timer entries from Firestore
-  if (CONFIGURED && db){
-    const cleanups = activeTimers.filter(t=>t.firestoreId).map(t=>
-      db.collection('liveTimers').doc(t.firestoreId).delete().catch(()=>{})
-    );
-    await Promise.all(cleanups);
-    activeTimers.forEach(t=>{ t.firestoreId=null; });
-    saveTimers();
-  }
+  // Do NOT delete liveTimers docs on logout — other devices must keep running the timers.
+  // Docs are only removed when a timer is explicitly stopped via saveStop/removeSlot.
   teardownListeners();
   if (auth) auth.signOut();
   currentUser = null;
