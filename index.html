@@ -123,10 +123,17 @@
       padding-bottom:.5rem;margin-bottom:1rem}
 
     /* SYNC INDICATOR */
-    .sync-dot{width:8px;height:8px;border-radius:50%;background:#4caf50;
-      display:inline-block;animation:pulse 2s infinite}
+    .sync-dot{width:10px;height:10px;border-radius:50%;background:#4caf50;
+      display:inline-block;animation:pulse 2s infinite;transition:background .3s,box-shadow .3s}
     @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-    .sync-dot.offline{background:#ef5350;animation:none}
+    .sync-dot.offline {background:#ef5350;animation:none}
+    .sync-dot.pending {background:#ff9800;animation:none;
+      box-shadow:0 0 0 3px rgba(255,152,0,.3)}
+    .sync-label{font-size:.72rem;opacity:.85}
+
+    /* TOAST */
+    @keyframes slideInRight{from{transform:translateX(110%);opacity:0}to{transform:translateX(0);opacity:1}}
+    @keyframes fadeOutRight{from{opacity:1}to{transform:translateX(110%);opacity:0}}
 
     /* MODAL NOTES */
     .notes-modal-header{background:linear-gradient(135deg,var(--primary),var(--pl));
@@ -189,7 +196,10 @@
       <small id="hdrDate"></small>
     </div>
     <div class="d-flex align-items-center gap-2">
-      <span class="sync-dot" id="syncDot" title="Connected"></span>
+      <span class="d-flex align-items-center gap-1" title="Sync status">
+        <span class="sync-dot" id="syncDot"></span>
+        <span class="sync-label" id="syncLabel">Synced</span>
+      </span>
       <span class="user-badge" id="userBadge" onclick="doSignOut()">
         <i class="bi bi-person-circle me-1"></i><span id="userNameDisplay"></span>
         &nbsp;<i class="bi bi-box-arrow-right" title="Sign out"></i>
@@ -532,45 +542,6 @@
   </div>
 </div>
 
-<!-- Interrupted Timer Modal -->
-<div class="modal fade" id="interruptedModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header" style="background:linear-gradient(135deg,#e65100,#bf360c);color:white;border-radius:.5rem .5rem 0 0">
-        <h5 class="modal-title fw-bold"><i class="bi bi-exclamation-triangle-fill me-2"></i>Interrupted Timer Found</h5>
-      </div>
-      <div class="modal-body">
-        <p class="text-muted mb-3" style="font-size:.87rem">
-          This timer was running when the page closed or the connection was lost. We recovered the time recorded.
-        </p>
-        <div class="d-flex justify-content-between align-items-center mb-3 p-3 rounded" style="background:#fff3cd;border:1px solid #ffc107">
-          <div>
-            <div class="fw-semibold" id="intProjName"></div>
-            <div class="text-muted" id="intCategory" style="font-size:.83rem"></div>
-          </div>
-          <div class="text-end">
-            <div class="fw-bold" style="font-size:1.5rem;color:#e65100" id="intDuration"></div>
-            <div class="text-muted" style="font-size:.75rem">time recorded</div>
-          </div>
-        </div>
-        <label class="form-label fw-semibold">Work Notes <span class="text-muted fw-normal">(optional)</span></label>
-        <textarea id="intNotes" class="form-control" rows="3" placeholder="What were you working on before disconnection?"></textarea>
-      </div>
-      <div class="modal-footer flex-wrap gap-2">
-        <button class="btn btn-outline-danger btn-sm" onclick="handleInterrupted('discard')">
-          <i class="bi bi-trash me-1"></i>Discard
-        </button>
-        <button class="btn btn-outline-primary" onclick="handleInterrupted('resume')">
-          <i class="bi bi-play-fill me-1"></i>Resume Timer
-        </button>
-        <button class="btn btn-success" onclick="handleInterrupted('save')">
-          <i class="bi bi-check-circle me-1"></i>Save Session
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
-
 <!-- ════════════════════════════════════════════════════════════════
      BOOTSTRAP JS
 ════════════════════════════════════════════════════════════════ -->
@@ -597,6 +568,11 @@ if (CONFIGURED) {
   firebase.initializeApp(firebaseConfig);
   auth = firebase.auth();
   db   = firebase.firestore();
+  // Enable offline persistence — Firestore caches data locally and
+  // queues writes when offline, auto-syncing when connection returns.
+  // Your project data in Firebase is NEVER affected by redeploying index.html.
+  db.enablePersistence({ synchronizeTabs: true })
+    .catch(err => console.warn('Firestore persistence:', err.code));
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -634,11 +610,11 @@ let barChart     = null;
 let pieChart     = null;
 
 // Bootstrap modal instances
-let projModal, sessModal, stopModal, interruptedModal;
+let projModal, sessModal, stopModal;
 
-// Interrupted timer recovery queue
-let interruptedQueue = [];
-let currentInterruptedId = null;
+// Offline support
+const OFFLINE_QUEUE_KEY = 'pss_offline_sessions';
+let isOnline = navigator.onLine;
 let autoSaveTick = 0;
 
 /* Admin / boss identity */
@@ -762,10 +738,80 @@ function teardownListeners(){
   if (unsubCfg)  { unsubCfg();  unsubCfg=null;  }
 }
 
-function setSyncStatus(online){
-  const dot = document.getElementById('syncDot');
-  if (online){ dot.classList.remove('offline'); dot.title='Synced'; }
-  else       { dot.classList.add('offline');    dot.title='Offline'; }
+function setSyncStatus(online, pendingCount){
+  const dot   = document.getElementById('syncDot');
+  const label = document.getElementById('syncLabel');
+  const n = pendingCount ?? loadOfflineQueue().length;
+
+  dot.classList.remove('offline','pending');
+  if (!online){
+    dot.classList.add('offline');
+    if(label){ label.textContent='Offline'; }
+  } else if (n > 0){
+    dot.classList.add('pending');
+    if(label){ label.textContent=`Syncing ${n}…`; }
+  } else {
+    if(label){ label.textContent='Synced'; }
+  }
+}
+
+/* ── Offline session queue ──────────────────────────────────── */
+function loadOfflineQueue(){
+  try{ return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY)||'[]'); }
+  catch{ return []; }
+}
+function saveOfflineQueue(q){ localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(q)); }
+
+function addToOfflineQueue(session){
+  const q = loadOfflineQueue();
+  q.push(session);
+  saveOfflineQueue(q);
+  setSyncStatus(false);
+}
+
+async function syncOfflineQueue(){
+  if (!CONFIGURED || !db) return;
+  const q = loadOfflineQueue();
+  if (!q.length){ setSyncStatus(true,0); return; }
+
+  setSyncStatus(true, q.length);
+  let synced = 0;
+  for (const session of q){
+    try {
+      const {_id,...data} = session;
+      await db.collection('sessions').add({
+        ...data,
+        createdAt : firebase.firestore.FieldValue.serverTimestamp(),
+        syncedAt  : firebase.firestore.FieldValue.serverTimestamp()
+      });
+      synced++;
+    } catch(e){
+      console.warn('sync failed, stopping', e);
+      break;
+    }
+  }
+  if (synced){
+    saveOfflineQueue(q.slice(synced));
+    setSyncStatus(true, q.length - synced);
+    showToast(`✓ Synced ${synced} session${synced>1?'s':''} to cloud`, 'success');
+  }
+}
+
+/* ── Toast notification ─────────────────────────────────────── */
+function showToast(msg, type='info'){
+  const colors = {info:'#1a237e', success:'#2e7d32', warning:'#e65100', danger:'#c62828'};
+  const t = document.createElement('div');
+  t.style.cssText = `position:fixed;bottom:1.5rem;right:1.5rem;z-index:99999;
+    background:${colors[type]||colors.info};color:#fff;padding:.75rem 1.25rem;
+    border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.28);font-size:.875rem;
+    max-width:340px;animation:slideInRight .35s ease;pointer-events:none`;
+  const icons = {info:'info-circle',success:'check-circle-fill',warning:'exclamation-triangle-fill',danger:'x-circle-fill'};
+  t.innerHTML = `<i class="bi bi-${icons[type]||icons.info} me-2"></i>${msg}`;
+  document.body.appendChild(t);
+  setTimeout(()=>{
+    t.style.animation='fadeOutRight .4s ease forwards';
+    setTimeout(()=>t.remove(), 400);
+  }, 4000);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -773,10 +819,9 @@ function setSyncStatus(online){
 ═══════════════════════════════════════════════════════════════ */
 window.addEventListener('DOMContentLoaded', ()=>{
   // Bootstrap modals — create once
-  projModal        = new bootstrap.Modal(document.getElementById('projectModal'));
-  sessModal        = new bootstrap.Modal(document.getElementById('sessionModal'));
-  stopModal        = new bootstrap.Modal(document.getElementById('stopNotesModal'));
-  interruptedModal = new bootstrap.Modal(document.getElementById('interruptedModal'));
+  projModal = new bootstrap.Modal(document.getElementById('projectModal'));
+  sessModal = new bootstrap.Modal(document.getElementById('sessionModal'));
+  stopModal = new bootstrap.Modal(document.getElementById('stopNotesModal'));
 
   document.getElementById('projModalClose').onclick = ()=>projModal.hide();
   document.getElementById('projCancelBtn').onclick  = ()=>projModal.hide();
@@ -849,6 +894,23 @@ function onUserReady(){
   setupListeners();
   restoreTimers();
   showPage('timer');
+
+  // ── Connection monitoring ───────────────────────────────────
+  window.addEventListener('online', ()=>{
+    isOnline = true;
+    setSyncStatus(true);
+    showToast('Back online — syncing sessions…', 'info');
+    syncOfflineQueue();
+  });
+  window.addEventListener('offline', ()=>{
+    isOnline = false;
+    setSyncStatus(false);
+    showToast('You are offline — timers continue, sessions will sync when reconnected', 'warning');
+  });
+
+  // Sync any queued sessions from a previous offline session
+  if (navigator.onLine) syncOfflineQueue();
+  else setSyncStatus(false);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -925,87 +987,26 @@ function tickAll(){
 function restoreTimers(){
   if (!activeTimers.length) { renderSlots(); return; }
   const now = Date.now();
-  interruptedQueue = [];
+  let resumed = 0;
 
   activeTimers.forEach(t=>{
     if (t.state==='running' && t.lastStart){
-      // Recover all elapsed time since last auto-save (up to ~30s max loss)
+      // Recover elapsed time since last 30s checkpoint — no data lost
       t.elapsed   = (t.elapsed||0) + Math.floor((now - t.lastStart)/1000);
-      t.lastStart = null;
-      t.state     = 'paused';  // Hold as paused — let user decide
-      interruptedQueue.push(t.id);
+      t.lastStart = now;  // Auto-resume immediately from now
+      resumed++;
     }
   });
 
   saveTimers();
-  // Only start master tick if some timers are still actively running
   if (activeTimers.some(t=>t.state==='running')) startMasterTick();
   renderSlots();
 
-  // Prompt user for each interrupted timer (after projects load)
-  if (interruptedQueue.length) {
-    // Small delay so Firestore project listener has time to populate S.projects
-    setTimeout(showNextInterrupted, 1500);
+  if (resumed > 0){
+    setTimeout(()=>
+      showToast(`▶ ${resumed} timer${resumed>1?'s':''} resumed — no time lost`, 'info')
+    , 800);
   }
-}
-
-function showNextInterrupted(){
-  if (!interruptedQueue.length) return;
-  currentInterruptedId = interruptedQueue.shift();
-  const t = activeTimers.find(x=>x.id===currentInterruptedId);
-  if (!t){ showNextInterrupted(); return; }
-
-  const proj = S.projects.find(p=>p.id===t.projectId);
-  document.getElementById('intProjName').textContent = proj ? `${proj.num} – ${proj.name}` : 'Unknown Project';
-  document.getElementById('intCategory').textContent  = t.category || '';
-  document.getElementById('intDuration').textContent  = secsToHMS(t.elapsed||0);
-  document.getElementById('intNotes').value = '';
-  interruptedModal.show();
-}
-
-async function handleInterrupted(action){
-  const t = activeTimers.find(x=>x.id===currentInterruptedId);
-  if (!t){ interruptedModal.hide(); setTimeout(showNextInterrupted,400); return; }
-
-  if (action==='save'){
-    const notes    = document.getElementById('intNotes').value.trim();
-    const totalSec = t.elapsed||0;
-    if (totalSec > 0){
-      const session = {
-        projectId  : t.projectId,
-        category   : t.category||'',
-        notes,
-        userId     : currentUser.uid,
-        userName   : currentUserName,
-        userEmail  : currentUser.email||'',
-        startTime  : t.sessionStart || new Date(Date.now()-totalSec*1000).toISOString(),
-        endTime    : new Date().toISOString(),
-        duration   : totalSec,
-        date       : todayStr(),
-        interrupted: true,
-        createdAt  : CONFIGURED ? firebase.firestore.FieldValue.serverTimestamp() : new Date().toISOString()
-      };
-      if (CONFIGURED && db){
-        try { await db.collection('sessions').add(session); } catch(e){ console.error('interrupted save',e); }
-      } else {
-        S.sessions.push({...session, id:Date.now().toString()});
-      }
-    }
-    activeTimers = activeTimers.filter(x=>x.id!==currentInterruptedId);
-    saveTimers(); renderSlots();
-
-  } else if (action==='resume'){
-    t.state     = 'running';
-    t.lastStart = Date.now();
-    saveTimers(); renderSlots(); startMasterTick();
-
-  } else { // discard
-    activeTimers = activeTimers.filter(x=>x.id!==currentInterruptedId);
-    saveTimers(); renderSlots();
-  }
-
-  interruptedModal.hide();
-  setTimeout(showNextInterrupted, 500);
 }
 
 function addSlot(){
@@ -1163,16 +1164,29 @@ async function saveStop(skipNotes){
       startTime : startISO,
       endTime   : endISO,
       duration  : totalSecs,
-      date      : dateStr,
-      createdAt : CONFIGURED ? firebase.firestore.FieldValue.serverTimestamp() : new Date().toISOString()
+      date      : dateStr
     };
 
-    if (CONFIGURED && db) {
-      try { await db.collection('sessions').add(session); }
-      catch(e){ console.error('session save', e); }
+    if (CONFIGURED && db){
+      if (navigator.onLine){
+        try {
+          await db.collection('sessions').add({
+            ...session,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+        } catch(e){
+          // Firestore write failed — fallback to offline queue
+          console.warn('Firestore write failed, queuing', e);
+          addToOfflineQueue({...session, _id: Date.now().toString(), createdAt: endISO});
+          showToast('Offline — session saved locally, will sync when connected', 'warning');
+        }
+      } else {
+        // No network — queue and sync later
+        addToOfflineQueue({...session, _id: Date.now().toString(), createdAt: endISO});
+        showToast('Offline — session saved locally, will sync automatically', 'warning');
+      }
     } else {
-      // offline: store in memory
-      S.sessions.push({...session, id: Date.now().toString()});
+      S.sessions.push({...session, id: Date.now().toString(), createdAt: endISO});
     }
   }
 
