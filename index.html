@@ -428,6 +428,46 @@
       <button class="btn btn-primary px-4" onclick="saveSettings()">
         <i class="bi bi-cloud-upload me-1"></i>Save Settings
       </button>
+
+      <!-- Admin-only: Data Management -->
+      <div id="adminDataSection" class="setting-section d-none mt-4">
+        <h6><i class="bi bi-database-gear me-1"></i>Data Management
+          <span class="badge bg-danger ms-1" style="font-size:.7rem">Admin Only</span>
+        </h6>
+
+        <div class="mb-4">
+          <div class="fw-semibold mb-2">Export Session Logs</div>
+          <div class="d-flex flex-wrap gap-2">
+            <button class="btn btn-outline-success btn-sm" onclick="exportAllLogs('1month')">
+              <i class="bi bi-file-earmark-arrow-down me-1"></i>Last 1 Month
+            </button>
+            <button class="btn btn-outline-success btn-sm" onclick="exportAllLogs('3months')">
+              <i class="bi bi-file-earmark-arrow-down me-1"></i>Last 3 Months
+            </button>
+            <button class="btn btn-outline-success btn-sm" onclick="exportAllLogs('6months')">
+              <i class="bi bi-file-earmark-arrow-down me-1"></i>Last 6 Months
+            </button>
+            <button class="btn btn-outline-success btn-sm" onclick="exportAllLogs('1year')">
+              <i class="bi bi-file-earmark-arrow-down me-1"></i>Last 1 Year
+            </button>
+            <button class="btn btn-outline-primary btn-sm" onclick="exportAllLogs('all')">
+              <i class="bi bi-file-earmark-arrow-down me-1"></i>All Time
+            </button>
+          </div>
+          <div class="text-muted mt-1" style="font-size:.8rem">Downloads a CSV of all sessions for all users in the chosen period.</div>
+        </div>
+
+        <div>
+          <div class="fw-semibold text-danger mb-2">Danger Zone</div>
+          <button class="btn btn-danger btn-sm" onclick="clearAllLogs()">
+            <i class="bi bi-trash3-fill me-1"></i>Clear ALL Log Data
+          </button>
+          <div class="text-muted mt-1" style="font-size:.8rem">
+            Permanently deletes every session for every user. Cannot be undone.
+          </div>
+        </div>
+      </div>
+
     </div>
   </div><!-- /content -->
 </div><!-- /appShell -->
@@ -1264,8 +1304,8 @@ async function saveStop(skipNotes){
   const editedSecs = hmsToSecs(editedStr);
   const totalSecs  = (editedSecs !== null && editedSecs > 0) ? editedSecs : originalSecs;
   const notes   = skipNotes ? '' : document.getElementById('stopNotes').value.trim();
-  const endISO  = new Date().toISOString();
-  const dateStr = todayStr();
+  const endISO  = new Date(new Date(startISO).getTime() + totalSecs * 1000).toISOString();
+  const dateStr = endISO.slice(0, 10);
 
   if (totalSecs > 0) {
     const session = {
@@ -1893,6 +1933,9 @@ function renderSettingsUI(){
   renderListUI('projectTypes',  'listProjectTypes');
   renderListUI('statusOptions', 'listStatusOptions');
   renderListUI('workCategories','listWorkCategories');
+
+  // Show data management section only for admin
+  document.getElementById('adminDataSection').classList.toggle('d-none', !isAdmin());
 }
 
 function renderListUI(key, containerId){
@@ -2038,6 +2081,96 @@ async function downloadDashboardExcel(){
   document.body.appendChild(a); a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+/* ── Admin: Export all logs for chosen period ── */
+async function exportAllLogs(period){
+  if (!isAdmin()){ showToast('Admin only', 'danger'); return; }
+  if (!CONFIGURED || !db){ showToast('Firebase not configured', 'warning'); return; }
+
+  let startDate = null;
+  const now = new Date();
+  if (period === '1month')  { const d=new Date(now); d.setMonth(d.getMonth()-1);        startDate=d.toISOString().slice(0,10); }
+  if (period === '3months') { const d=new Date(now); d.setMonth(d.getMonth()-3);        startDate=d.toISOString().slice(0,10); }
+  if (period === '6months') { const d=new Date(now); d.setMonth(d.getMonth()-6);        startDate=d.toISOString().slice(0,10); }
+  if (period === '1year')   { const d=new Date(now); d.setFullYear(d.getFullYear()-1);  startDate=d.toISOString().slice(0,10); }
+
+  showToast('Preparing export…', 'info');
+  try {
+    let q = db.collection('sessions');
+    if (startDate) q = q.where('date', '>=', startDate);
+    const snap = await q.get();
+    const sessions = snap.docs.map(d=>({id:d.id,...d.data()}));
+
+    sessions.sort((a,b)=>{
+      const ta = a.startTime ? new Date(a.startTime) : new Date(a.date||0);
+      const tb = b.startTime ? new Date(b.startTime) : new Date(b.date||0);
+      return tb - ta;
+    });
+
+    const headers = ['Date','Start Time','End Time','Project No','Project Name','Category','Duration (hrs)','User','Notes'];
+    const csvLine = row => row.map(c=>`"${String(c||'').replace(/"/g,'""')}"`).join(',');
+    const rows = sessions.map(s=>{
+      const proj = S.projects.find(p=>p.id===s.projectId);
+      return [
+        s.date||'',
+        s.startTime ? new Date(s.startTime).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}) : '',
+        s.endTime   ? new Date(s.endTime).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})   : '',
+        proj?.num  || '',
+        proj?.name || s.projectId || '',
+        s.category  || '',
+        ((s.duration||0)/3600).toFixed(2),
+        s.userName  || s.userEmail || '',
+        s.notes     || ''
+      ];
+    });
+
+    const periodLabel = {'1month':'Last_1_Month','3months':'Last_3_Months','6months':'Last_6_Months','1year':'Last_1_Year','all':'All_Time'}[period]||period;
+    const csv = [
+      `"PSS Time Tracker — Session Log Export (${periodLabel.replace(/_/g,' ')})"`,
+      `"Exported: ${new Date().toLocaleString('en-IN')}  |  Total sessions: ${sessions.length}"`,
+      '',
+      csvLine(headers),
+      ...rows.map(csvLine)
+    ].join('\n');
+
+    const blob = new Blob(['﻿'+csv], {type:'text/csv;charset=utf-8'});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `PSS_Logs_${periodLabel}_${todayStr()}.csv`;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(`✓ ${sessions.length} sessions exported`, 'success');
+  } catch(e){
+    showToast('Export failed: '+e.message, 'danger');
+    console.error('exportAllLogs', e);
+  }
+}
+
+/* ── Admin: Clear ALL session logs from Firestore ── */
+async function clearAllLogs(){
+  if (!isAdmin()){ showToast('Admin only', 'danger'); return; }
+  if (!confirm('⚠️ This will permanently delete ALL session logs for ALL users.\n\nThis CANNOT be undone.\n\nClick OK to continue.')) return;
+  const typed = prompt('Type  YES  to confirm permanent deletion of all logs:');
+  if (typed?.trim() !== 'YES'){ showToast('Cancelled — type YES to confirm', 'info'); return; }
+
+  showToast('Deleting all sessions…', 'warning');
+  try {
+    const snap  = await db.collection('sessions').get();
+    const total = snap.docs.length;
+    // Firestore batch limit = 500
+    for (let i = 0; i < snap.docs.length; i += 500){
+      const batch = db.batch();
+      snap.docs.slice(i, i+500).forEach(doc => batch.delete(doc.ref));
+      await batch.commit();
+    }
+    showToast(`✓ ${total} sessions deleted`, 'success');
+  } catch(e){
+    showToast('Delete failed: '+e.message, 'danger');
+    console.error('clearAllLogs', e);
+  }
 }
 
 function populateProjectDropdowns(){
