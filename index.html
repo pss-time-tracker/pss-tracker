@@ -235,6 +235,19 @@
         <i class="bi bi-stopwatch" style="font-size:2rem;opacity:.3;display:block;margin-bottom:.5rem"></i>
         No active timers. Click <strong>Add Timer</strong> to start.
       </p>
+
+      <!-- Team running timers from other devices / users (live from Firestore) -->
+      <div id="remoteTimersSection" class="d-none mt-4">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <h6 class="mb-0 fw-semibold" style="color:#555">
+            <i class="bi bi-people-fill me-1"></i>Team Running Now
+          </h6>
+          <span class="badge rounded-pill" style="background:#e8eaf6;color:#3949ab;font-size:.7rem;font-weight:600">
+            <span class="sync-dot" style="width:7px;height:7px;display:inline-block;vertical-align:middle;margin-right:3px;background:#4caf50;border-radius:50%;animation:pulse 2s infinite"></span>Live
+          </span>
+        </div>
+        <div id="remoteTimersContainer" class="d-flex flex-column gap-3"></div>
+      </div>
     </div>
 
     <!-- ── PROJECTS PAGE ──────────────────────────────────────── -->
@@ -601,6 +614,10 @@ let currentUserName= '';
 let unsubProj      = null;
 let unsubSess      = null;
 let unsubCfg       = null;
+let unsubLive      = null;
+
+// Live timers from other devices (Firestore liveTimers collection)
+let liveTimers     = [];
 
 // State that comes from Firestore
 let S = {
@@ -636,6 +653,13 @@ let autoSaveTick = 0;
 /* Admin / boss identity */
 const ADMIN_EMAIL = 'prasad.rssaj@gmail.com';
 function isAdmin(){ return currentUser && currentUser.email === ADMIN_EMAIL; }
+
+/* Per-device identifier — survives page refresh, unique per browser/tab */
+const DEVICE_ID = (() => {
+  let id = localStorage.getItem('pss_device_id');
+  if (!id){ id = 'dev_' + Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('pss_device_id', id); }
+  return id;
+})();
 
 /* ═══════════════════════════════════════════════════════════════
    LOCAL STORAGE HELPERS
@@ -707,8 +731,17 @@ async function forgotPwd(){
   }
 }
 
-function doSignOut(){
+async function doSignOut(){
   if (!confirm('Sign out?')) return;
+  // Clean up this device's live timer entries from Firestore
+  if (CONFIGURED && db){
+    const cleanups = activeTimers.filter(t=>t.firestoreId).map(t=>
+      db.collection('liveTimers').doc(t.firestoreId).delete().catch(()=>{})
+    );
+    await Promise.all(cleanups);
+    activeTimers.forEach(t=>{ t.firestoreId=null; });
+    saveTimers();
+  }
   teardownListeners();
   if (auth) auth.signOut();
   currentUser = null;
@@ -745,6 +778,18 @@ function setupListeners(){
     populateProjectDropdowns();
   }, err=>console.warn('cfg listener',err));
 
+  // Live timers — cross-device real-time visibility
+  unsubLive = db.collection('liveTimers').onSnapshot(snap => {
+    liveTimers = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(lt => lt.deviceId !== DEVICE_ID)             // exclude this device's own entries
+      .filter(lt => isAdmin() || lt.userEmail !== ADMIN_EMAIL); // hide boss from non-admins
+    renderRemoteTimers();
+    // keep master tick alive if remote timers are running
+    if (liveTimers.some(lt => lt.state === 'running')) startMasterTick();
+    else checkStopMaster();
+  }, err => console.warn('liveTimers listener', err));
+
   if (navigator.onLine) setSyncStatus(true);
 }
 
@@ -752,6 +797,7 @@ function teardownListeners(){
   if (unsubProj) { unsubProj(); unsubProj=null; }
   if (unsubSess) { unsubSess(); unsubSess=null; }
   if (unsubCfg)  { unsubCfg();  unsubCfg=null;  }
+  if (unsubLive) { unsubLive(); unsubLive=null; }
 }
 
 function setSyncStatus(online, pendingCount){
@@ -964,7 +1010,8 @@ function stopMasterTick(){
 }
 
 function checkStopMaster(){
-  const anyRunning = activeTimers.some(t=>t.state==='running');
+  const anyRunning = activeTimers.some(t=>t.state==='running')
+    || liveTimers.some(lt=>lt.state==='running');
   if (!anyRunning) stopMasterTick();
 }
 
@@ -973,6 +1020,12 @@ function tickAll(){
     if (t.state!=='running') return;
     const el = document.getElementById('td-'+t.id);
     if (el) el.textContent = secsToHMS(getElapsed(t));
+  });
+  // Also tick remote timer displays
+  liveTimers.forEach(lt=>{
+    if (lt.state!=='running') return;
+    const el = document.getElementById('rtd-'+lt.id);
+    if (el) el.textContent = secsToHMS(getElapsedCrossDevice(lt));
   });
   // Auto-save elapsed to localStorage every 30 seconds
   // This ensures minimal data loss on page close / network drop
@@ -1013,6 +1066,8 @@ function restoreTimers(){
       showToast(`▶ ${resumed} timer${resumed>1?'s':''} resumed — no time lost`, 'info')
     , 800);
   }
+  // Re-broadcast running timers to Firestore so other devices see them
+  activeTimers.filter(t=>t.state==='running').forEach(t=>syncTimerToFirestore(t));
 }
 
 function addSlot(){
@@ -1100,6 +1155,7 @@ function startSlot(id){
   t.state     = 'running';
   t.lastStart = Date.now();
   saveTimers(); renderSlots(); startMasterTick();
+  syncTimerToFirestore(t);  // broadcast to other devices
 }
 
 function pauseSlot(id){
@@ -1109,6 +1165,7 @@ function pauseSlot(id){
   t.lastStart = null;
   t.state = 'paused';
   saveTimers(); renderSlots(); checkStopMaster();
+  removeFirestoreTimer(t);  // take off the live board when paused
 }
 
 function stopSlot(id){
@@ -1132,11 +1189,12 @@ function stopSlot(id){
   // set up pendingStop
   const proj = S.projects.find(p=>p.id===t.projectId);
   pendingStop = {
-    slotId    : id,
-    totalSecs : totalSecs,
-    projectId : t.projectId,
-    startISO  : t.sessionStart || new Date(Date.now() - totalSecs*1000).toISOString(),
-    category  : t.category || ''
+    slotId      : id,
+    firestoreId : t.firestoreId || null,
+    totalSecs   : totalSecs,
+    projectId   : t.projectId,
+    startISO    : t.sessionStart || new Date(Date.now() - totalSecs*1000).toISOString(),
+    category    : t.category || ''
   };
 
   // populate stop modal
@@ -1196,6 +1254,9 @@ async function saveStop(skipNotes){
     }
   }
 
+  // Remove from live timers board
+  const stoppedTimer = activeTimers.find(x=>x.id===slotId);
+  if (stoppedTimer) await removeFirestoreTimer(stoppedTimer);
   resetSlot(slotId);
   stopModal.hide();
   pendingStop = null;
@@ -1223,9 +1284,143 @@ function cancelStop(){
 
 function removeSlot(id){
   const t = activeTimers.find(x=>x.id===id);
-  if (t && t.state==='running') pauseSlot(id);
+  if (t){
+    if (t.state==='running'){
+      t.elapsed += Math.floor((Date.now()-t.lastStart)/1000);
+      t.lastStart = null; t.state = 'paused';
+    }
+    removeFirestoreTimer(t);
+  }
   activeTimers = activeTimers.filter(x=>x.id!==id);
   saveTimers(); renderSlots(); checkStopMaster();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CROSS-DEVICE LIVE TIMER SYNC
+═══════════════════════════════════════════════════════════════ */
+
+/* Calculate elapsed for a Firestore live timer (lastStart is ISO string) */
+function getElapsedCrossDevice(lt){
+  let el = lt.elapsed || 0;
+  if (lt.state === 'running' && lt.lastStart){
+    el += (Date.now() - new Date(lt.lastStart).getTime()) / 1000;
+  }
+  return Math.floor(el);
+}
+
+/* Write/update running timer to Firestore liveTimers collection */
+async function syncTimerToFirestore(t){
+  if (!CONFIGURED || !db || !currentUser) return;
+  const data = {
+    userId      : currentUser.uid,
+    userEmail   : currentUser.email || '',
+    userName    : currentUserName,
+    deviceId    : DEVICE_ID,
+    projectId   : t.projectId,
+    category    : t.category || '',
+    state       : t.state,
+    elapsed     : t.elapsed || 0,
+    lastStart   : t.lastStart ? new Date(t.lastStart).toISOString() : null,
+    sessionStart: t.sessionStart || null,
+    updatedAt   : firebase.firestore.FieldValue.serverTimestamp()
+  };
+  try {
+    if (t.firestoreId){
+      await db.collection('liveTimers').doc(t.firestoreId).set(data);
+    } else {
+      const ref = await db.collection('liveTimers').add(data);
+      t.firestoreId = ref.id;
+      saveTimers();  // persist firestoreId so we can update/delete it later
+    }
+  } catch(e){ console.warn('liveTimers sync failed', e); }
+}
+
+/* Remove timer from Firestore liveTimers (paused / stopped / removed) */
+async function removeFirestoreTimer(t){
+  if (!CONFIGURED || !db || !t.firestoreId) return;
+  const fid = t.firestoreId;
+  t.firestoreId = null;
+  saveTimers();
+  try { await db.collection('liveTimers').doc(fid).delete(); }
+  catch(e){ console.warn('liveTimers remove failed', e); }
+}
+
+/* Render the "Team Running Now" section from liveTimers */
+function renderRemoteTimers(){
+  const cont    = document.getElementById('remoteTimersContainer');
+  const section = document.getElementById('remoteTimersSection');
+  if (!cont || !section) return;
+
+  const visible = liveTimers.filter(lt => lt.state === 'running' || lt.state === 'paused');
+  if (!visible.length){ section.classList.add('d-none'); return; }
+  section.classList.remove('d-none');
+  cont.innerHTML = '';
+
+  visible.forEach(lt => {
+    const proj    = S.projects.find(p => p.id === lt.projectId);
+    const elapsed = secsToHMS(getElapsedCrossDevice(lt));
+    const isOwn   = lt.userId === currentUser?.uid;
+    const col     = lt.state === 'running' ? 'var(--success)' : 'var(--warning)';
+    const icon    = lt.state === 'running' ? 'bi-play-circle-fill' : 'bi-pause-circle-fill';
+    const projNum = proj?.num || '';
+    const subline = lt.category ? `${projNum} · ${lt.category}` : projNum;
+
+    const div = document.createElement('div');
+    div.className = 'timer-slot';
+    div.id = 'rslot-' + lt.id;
+    div.style.borderLeftColor = col;
+    div.style.opacity = '0.88';
+    div.innerHTML = `
+      <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <div style="flex:1;min-width:0">
+          <div class="slot-project-name">
+            ${esc(proj ? proj.name : 'Unknown')}
+            <span class="badge bg-light border ms-2" style="font-size:.72rem;color:${col};vertical-align:middle">
+              <i class="bi ${icon}"></i> ${esc(lt.userName || '?')}
+            </span>
+          </div>
+          <div class="slot-project-num text-muted">${esc(subline)}</div>
+        </div>
+        <div id="rtd-${lt.id}" class="timer-display" style="font-size:1.8rem;color:${col}">${elapsed}</div>
+        <div class="d-flex gap-2">
+          ${isOwn ? `<button class="btn btn-primary btn-sm" onclick="takeoverTimer('${lt.id}')">
+            <i class="bi bi-arrow-down-circle-fill me-1"></i>Use Here</button>` : ''}
+        </div>
+      </div>`;
+    cont.appendChild(div);
+  });
+}
+
+/* Claim a timer from another device — copies it to this device and resumes */
+async function takeoverTimer(firestoreDocId){
+  const lt = liveTimers.find(x => x.id === firestoreDocId);
+  if (!lt) return;
+  if (lt.userId !== currentUser?.uid){
+    showToast("You can only take over your own timers.", 'warning'); return;
+  }
+
+  const elapsed = getElapsedCrossDevice(lt);
+  const id      = Date.now().toString();
+  const newSlot = {
+    id,
+    projectId   : lt.projectId,
+    category    : lt.category || '',
+    state       : 'running',
+    elapsed     : elapsed,
+    lastStart   : Date.now(),
+    sessionStart: lt.sessionStart || new Date(Date.now() - elapsed*1000).toISOString()
+  };
+
+  // Remove the other device's Firestore entry
+  try { await db.collection('liveTimers').doc(firestoreDocId).delete(); } catch(e){}
+
+  activeTimers.push(newSlot);
+  saveTimers();
+  renderSlots();
+  startMasterTick();
+  // Sync new slot to Firestore under this device
+  await syncTimerToFirestore(newSlot);
+  showToast('Timer moved to this device ✓', 'success');
 }
 
 /* ═══════════════════════════════════════════════════════════════
