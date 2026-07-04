@@ -323,9 +323,10 @@
           </div>
         </div>
         <div class="col-6 col-md-3">
-          <div class="stat-card" style="border-top-color:var(--warning)">
+          <div class="stat-card" style="border-top-color:var(--warning);cursor:pointer"
+               onclick="showSessionsDrilldown()" title="Click to see session details">
             <div class="val" id="dSessionCount">0</div>
-            <div class="lbl">Sessions</div>
+            <div class="lbl">Sessions <i class="bi bi-box-arrow-up-right" style="font-size:.7rem;opacity:.6"></i></div>
           </div>
         </div>
         <div class="col-6 col-md-3">
@@ -521,6 +522,37 @@
   </div>
 </div>
 
+<!-- Sessions Drill-down Modal -->
+<div class="modal fade" id="sessionsDrillModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,var(--primary),var(--pl));color:white">
+        <h5 class="modal-title fw-bold"><i class="bi bi-clock-history me-2"></i>Sessions Detail</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <table class="table table-hover table-sm mb-0" id="drillTable">
+          <thead class="table-light sticky-top">
+            <tr>
+              <th>Date</th>
+              <th>Project</th>
+              <th>Category</th>
+              <th>Duration</th>
+              <th>By</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="drillBody"></tbody>
+        </table>
+      </div>
+      <div class="modal-footer py-2">
+        <small class="text-muted me-auto" id="drillCount"></small>
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Stop + Notes Modal -->
 <div class="modal fade" id="stopNotesModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
   <div class="modal-dialog">
@@ -535,8 +567,10 @@
             <div class="text-muted" style="font-size:.85rem" id="stopCategory"></div>
           </div>
           <div class="text-end">
-            <div class="fw-bold text-primary" style="font-size:1.4rem" id="stopDuration">00:00:00</div>
-            <div class="text-muted" style="font-size:.78rem">duration</div>
+            <input type="text" id="stopDuration" class="form-control text-center fw-bold text-primary p-1"
+              style="font-size:1.35rem;width:120px;border:1.5px dashed var(--pl);border-radius:8px"
+              placeholder="HH:MM:SS" title="Click to edit duration">
+            <div class="text-muted" style="font-size:.78rem">duration (tap to edit)</div>
           </div>
         </div>
         <label class="form-label fw-semibold">Notes / Work Done <span class="text-muted fw-normal">(optional)</span></label>
@@ -641,6 +675,7 @@ let dashUserView = 'all';
 let logUserView  = 'all';
 let barChart     = null;
 let pieChart     = null;
+let dashSessions = [];  // sessions currently shown in dashboard — used for drill-down
 
 // Bootstrap modal instances
 let projModal, sessModal, stopModal;
@@ -997,6 +1032,12 @@ function secsToHMS(s){
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sc).padStart(2,'0')}`;
 }
 
+function hmsToSecs(str){
+  const parts = str.trim().split(':').map(Number);
+  if (parts.length !== 3 || parts.some(isNaN) || parts.some(v=>v<0)) return null;
+  return parts[0]*3600 + parts[1]*60 + parts[2];
+}
+
 function getElapsed(t){
   let el = t.elapsed||0;
   if (t.state==='running' && t.lastStart) el += (Date.now()-t.lastStart)/1000;
@@ -1085,10 +1126,12 @@ function confirmAddSlot(){
   const cat = document.getElementById('slotCategory').value;
   if (!pid) return;
   const id = Date.now().toString();
-  activeTimers.push({ id, projectId:pid, category:cat, state:'stopped', elapsed:0, lastStart:null, sessionStart:null });
+  const t = { id, projectId:pid, category:cat, state:'stopped', elapsed:0, lastStart:null, sessionStart:null };
+  activeTimers.push(t);
   saveTimers();
   renderSlots();
   sessModal.hide();
+  syncTimerToFirestore(t);  // broadcast to other devices even before starting
 }
 
 function renderSlots(){
@@ -1204,7 +1247,7 @@ function stopSlot(id){
   // populate stop modal
   document.getElementById('stopProjName').textContent = proj ? `${proj.num} – ${proj.name}` : 'Unknown Project';
   document.getElementById('stopCategory').textContent = t.category || '';
-  document.getElementById('stopDuration').textContent = secsToHMS(totalSecs);
+  document.getElementById('stopDuration').value = secsToHMS(totalSecs);
   document.getElementById('stopNotes').value = '';
 
   // Small delay ensures DOM settles before modal opens
@@ -1216,7 +1259,10 @@ function stopSlot(id){
 
 async function saveStop(skipNotes){
   if (!pendingStop) return;
-  const {slotId, totalSecs, projectId, startISO, category} = pendingStop;
+  const {slotId, totalSecs: originalSecs, projectId, startISO, category} = pendingStop;
+  const editedStr  = document.getElementById('stopDuration').value.trim();
+  const editedSecs = hmsToSecs(editedStr);
+  const totalSecs  = (editedSecs !== null && editedSecs > 0) ? editedSecs : originalSecs;
   const notes   = skipNotes ? '' : document.getElementById('stopNotes').value.trim();
   const endISO  = new Date().toISOString();
   const dateStr = todayStr();
@@ -1705,6 +1751,9 @@ async function renderDashboard(){
   const projFilter = document.getElementById('dashProjFilter')?.value || 'all';
   if (projFilter !== 'all') sessions = sessions.filter(s=>s.projectId===projFilter);
 
+  // Store for drill-down
+  dashSessions = sessions;
+
   const totalSecs  = sessions.reduce((a,s)=>a+(s.duration||0), 0);
   const totalHrs   = totalSecs/3600;
   const projIds    = [...new Set(sessions.map(s=>s.projectId))];
@@ -1790,6 +1839,48 @@ async function renderDashboard(){
       </tr>`;
   });
   if (!labels.length) tbody.innerHTML='<tr><td colspan="5" class="text-center text-muted py-3">No sessions in this period.</td></tr>';
+}
+
+function showSessionsDrilldown(){
+  if (!dashSessions.length){
+    showToast('No sessions in this period', 'info'); return;
+  }
+
+  // Sort latest first
+  const sorted = [...dashSessions].sort((a,b)=>{
+    const ta = a.startTime ? new Date(a.startTime) : new Date(a.date);
+    const tb = b.startTime ? new Date(b.startTime) : new Date(b.date);
+    return tb - ta;
+  });
+
+  const tbody = document.getElementById('drillBody');
+  tbody.innerHTML = '';
+  sorted.forEach(s=>{
+    const proj    = S.projects.find(p=>p.id===s.projectId);
+    const projLbl = proj ? `${proj.num} – ${proj.name}` : (s.projectId||'Unknown');
+    const dateStr = s.startTime ? new Date(s.startTime).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : (s.date||'');
+    const timeStr = s.startTime ? new Date(s.startTime).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}) : '';
+    const dur     = secsToHMS(s.duration||0);
+    const who     = s.userName || s.userEmail || '';
+    tbody.innerHTML += `
+      <tr>
+        <td style="white-space:nowrap">
+          <div>${esc(dateStr)}</div>
+          <div class="text-muted" style="font-size:.75rem">${esc(timeStr)}</div>
+        </td>
+        <td><span class="fw-semibold text-primary" style="font-size:.85rem">${esc(projLbl)}</span></td>
+        <td><span class="text-muted" style="font-size:.82rem">${esc(s.category||'—')}</span></td>
+        <td><span class="badge bg-light border text-dark fw-semibold">${esc(dur)}</span></td>
+        <td><span class="user-chip">${esc(who||'?')}</span></td>
+        <td style="max-width:200px"><span class="text-muted" style="font-size:.8rem;font-style:italic">${esc(s.notes||'—')}</span></td>
+      </tr>`;
+  });
+
+  document.getElementById('drillCount').textContent =
+    `${sorted.length} session${sorted.length!==1?'s':''} · ${(sorted.reduce((a,s)=>a+(s.duration||0),0)/3600).toFixed(1)}h total`;
+
+  const modal = new bootstrap.Modal(document.getElementById('sessionsDrillModal'));
+  modal.show();
 }
 
 /* ═══════════════════════════════════════════════════════════════
