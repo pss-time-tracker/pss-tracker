@@ -144,6 +144,36 @@
       .timer-display{font-size:1.6rem}
       .stat-card .val{font-size:1.4rem}
     }
+
+    /* ── SCHEDULE PAGE ─────────────────────────────────────── */
+    .sched-card{background:white;border-radius:14px;padding:1.1rem 1.25rem;
+      box-shadow:0 2px 10px rgba(0,0,0,.07);border-left:5px solid var(--pl);margin-bottom:.75rem}
+    .sched-card.behind {border-left-color:var(--danger)}
+    .sched-card.ahead  {border-left-color:var(--success)}
+    .sched-card.ontrack{border-left-color:var(--warning)}
+    .sched-badge{display:inline-block;border-radius:8px;padding:.2rem .65rem;font-size:.78rem;font-weight:600}
+    .sched-badge.behind {background:#fde8e8;color:var(--danger)}
+    .sched-badge.ahead  {background:#e8f5e9;color:var(--success)}
+    .sched-badge.ontrack{background:#fff3e0;color:var(--warning)}
+    .sched-badge.nodeadline{background:#f3f4fb;color:#555}
+    .res-alloc-table{width:100%;font-size:.8rem;border-collapse:collapse;margin-top:.4rem}
+    .res-alloc-table th{background:#f3f4fb;color:var(--primary);font-weight:600;padding:.3rem .5rem;text-align:left;border:1px solid #e0e3ef}
+    .res-alloc-table td{padding:.3rem .5rem;border:1px solid #eee;vertical-align:middle}
+    .res-alloc-table input[type=number]{width:68px;padding:.2rem .4rem;border:1px solid #ccc;border-radius:5px;font-size:.82rem;text-align:center}
+    .res-daily-sum{font-size:.78rem;color:#666;margin-top:.3rem}
+    .sched-badge.onhold       {background:#ede7f6;color:#6a1b9a}
+    .sched-badge.cancelled    {background:#f5f5f5;color:#757575;text-decoration:line-through}
+    .sched-card.onhold        {border-left-color:#9c27b0;opacity:.85}
+    .sched-card.cancelled     {border-left-color:#9e9e9e;opacity:.6}
+    .sched-badge.completed-ok {background:#e8f5e9;color:#1b5e20;font-weight:700}
+    .sched-card.completed-ok  {border-left-color:#2e7d32;opacity:.82}
+    .sched-badge.exhausted    {background:#fde8e8;color:var(--danger);font-weight:700;animation:pulse 2s infinite}
+    .sched-card.exhausted     {border-left-color:var(--danger)}
+    .res-day-tbl {width:100%;border-collapse:collapse}
+    .res-day-tbl th{background:#f3f4fb;color:var(--primary);padding:.3rem .5rem;border:1px solid #e0e3ef;font-size:.78rem;font-weight:600;white-space:nowrap}
+    .res-day-tbl td{padding:.3rem .5rem;border:1px solid #eee;text-align:center;vertical-align:middle;font-size:.82rem}
+    .res-day-tbl td.member-cell{text-align:left;font-weight:600;background:#fafbff}
+    .over-alloc{color:var(--danger);font-weight:700}
   </style>
 </head>
 <body>
@@ -210,10 +240,10 @@
   <!-- NAV -->
   <div class="nav-bar">
     <a onclick="showPage('timer')"    id="nav-timer">   <i class="bi bi-stopwatch-fill"></i>Timer</a>
-    <a onclick="showPage('projects')" id="nav-projects"><i class="bi bi-folder2-open"></i>Projects</a>
     <a onclick="showPage('sessions')" id="nav-sessions"><i class="bi bi-clock-history"></i>Log</a>
     <a onclick="showPage('dashboard')"id="nav-dashboard"><i class="bi bi-bar-chart-fill"></i>Dashboard</a>
     <a onclick="showPage('settings')" id="nav-settings"><i class="bi bi-gear-fill"></i>Settings</a>
+    <a onclick="showPage('schedule')" id="nav-schedule"><i class="bi bi-calendar3 me-1"></i>Schedule</a>
   </div>
 
   <div class="content">
@@ -251,20 +281,6 @@
     </div>
 
     <!-- ── PROJECTS PAGE ──────────────────────────────────────── -->
-    <div id="page-projects" class="d-none">
-      <div class="d-flex justify-content-between align-items-center mb-3">
-        <h5 class="mb-0 fw-bold">Projects</h5>
-        <button class="btn btn-primary btn-sm" id="addProjBtn" onclick="openAddProject()" style="display:none">
-          <i class="bi bi-plus-lg me-1"></i>Add Project
-        </button>
-      </div>
-      <div id="projectsList" class="d-flex flex-column gap-3"></div>
-      <p id="noProjMsg" class="text-center text-muted mt-4 d-none">
-        <i class="bi bi-folder2" style="font-size:2rem;opacity:.3;display:block;margin-bottom:.5rem"></i>
-        No projects yet. Add your first project.
-      </p>
-    </div>
-
     <!-- ── SESSION LOG PAGE ───────────────────────────────────── -->
     <div id="page-sessions" class="d-none">
       <div class="d-flex justify-content-between align-items-center mb-3">
@@ -308,18 +324,12 @@
         </div>
       </div>
 
-      <!-- stat cards -->
-      <div class="row g-3 mb-3">
+      <!-- stat cards — row 1: hours/sessions -->
+      <div class="row g-3 mb-2">
         <div class="col-6 col-md-3">
           <div class="stat-card">
             <div class="val" id="dTotalHours">0h</div>
             <div class="lbl">Total Hours</div>
-          </div>
-        </div>
-        <div class="col-6 col-md-3">
-          <div class="stat-card" style="border-top-color:var(--success)">
-            <div class="val" id="dActiveProjCount">0</div>
-            <div class="lbl">Active Projects</div>
           </div>
         </div>
         <div class="col-6 col-md-3">
@@ -333,6 +343,45 @@
           <div class="stat-card" style="border-top-color:var(--danger)">
             <div class="val" id="dAvgSession">0h</div>
             <div class="lbl">Avg Session</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="stat-card" style="border-top-color:#888;cursor:pointer"
+               onclick="showProjectsDrilldown('all')" title="All projects with sessions this period">
+            <div class="val" id="dAllProjCount">0</div>
+            <div class="lbl">Projects This Period <i class="bi bi-box-arrow-up-right" style="font-size:.7rem;opacity:.6"></i></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- stat cards — row 2: schedule health + portfolio value -->
+      <div class="row g-3 mb-3">
+        <div class="col-6 col-md-3">
+          <div class="stat-card" style="border-top-color:var(--success);cursor:pointer"
+               onclick="showProjectsDrilldown('active')" title="Click for active project details">
+            <div class="val" id="dActiveProjCount">0</div>
+            <div class="lbl">Active Projects <i class="bi bi-box-arrow-up-right" style="font-size:.7rem;opacity:.6"></i></div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="stat-card" style="border-top-color:var(--danger);cursor:pointer"
+               onclick="showProjectsDrilldown('exhausted')" title="Click — projects where logged hrs exceed plan">
+            <div class="val text-danger" id="dExhaustedCount">0</div>
+            <div class="lbl" style="color:var(--danger)">⚠ Exhausted <i class="bi bi-box-arrow-up-right" style="font-size:.7rem;opacity:.6"></i></div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="stat-card" style="border-top-color:#9c27b0;cursor:pointer"
+               onclick="showProjectsDrilldown('onhold')" title="Click — projects currently on hold">
+            <div class="val" style="color:#6a1b9a" id="dOnHoldCount">0</div>
+            <div class="lbl" style="color:#6a1b9a">⏸ On Hold <i class="bi bi-box-arrow-up-right" style="font-size:.7rem;opacity:.6"></i></div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="stat-card" style="border-top-color:#00796b;cursor:pointer"
+               onclick="showProjectsDrilldown('value')" title="Click — portfolio value breakdown by project">
+            <div class="val" id="dPortfolioValue" style="color:#00796b;font-size:1.4rem">₹0</div>
+            <div class="lbl" style="color:#00796b">Portfolio Value <i class="bi bi-box-arrow-up-right" style="font-size:.7rem;opacity:.6"></i></div>
           </div>
         </div>
       </div>
@@ -359,6 +408,7 @@
             <thead class="table-light">
               <tr>
                 <th>Project</th>
+                <th>Value (₹)</th>
                 <th>Hours</th>
                 <th>Sessions</th>
                 <th>Team</th>
@@ -429,6 +479,18 @@
         <i class="bi bi-cloud-upload me-1"></i>Save Settings
       </button>
 
+      <!-- Team Members (visible to all, editable by admin) -->
+      <div class="setting-section mt-3">
+        <h6><i class="bi bi-people me-1"></i>Team Members
+          <span class="badge ms-2" style="background:#e8eaf6;color:var(--primary);font-size:.7rem">Used in Schedule Planner</span>
+        </h6>
+        <div class="text-muted mb-2" style="font-size:.82rem">Member names used for per-person resource allocation in the Work Schedule Planner.</div>
+        <div id="teamMembersForm" class="row g-2"></div>
+        <button id="saveTeamBtn" onclick="saveTeamMembers()" class="btn btn-sm btn-primary mt-2" style="display:none">
+          <i class="bi bi-check-lg me-1"></i>Save Team Members
+        </button>
+      </div>
+
       <!-- Admin-only: Data Management -->
       <div id="adminDataSection" class="setting-section mt-4" style="display:none">
         <h6><i class="bi bi-database-gear me-1"></i>Data Management
@@ -482,6 +544,52 @@
         </div>
       </div>
 
+    </div>
+
+    <!-- ── SCHEDULE PAGE ──────────────────────────────────────── -->
+    <div id="page-schedule" class="d-none">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0 fw-bold">Work Schedule Planner</h5>
+        <button id="addSchedBtn" class="btn btn-primary btn-sm" onclick="openAddSchedule()" style="display:none">
+          <i class="bi bi-plus-lg me-1"></i>Add Project Schedule
+        </button>
+      </div>
+
+      <!-- Summary cards -->
+      <div class="row g-3 mb-3">
+        <div class="col-6 col-md-3">
+          <div class="stat-card">
+            <div class="val" id="sActiveCount">0</div>
+            <div class="lbl">Scheduled Projects</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="stat-card" style="border-top-color:var(--success)">
+            <div class="val" id="sOnTrackCount">0</div>
+            <div class="lbl">On Track</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="stat-card" style="border-top-color:var(--danger)">
+            <div class="val" id="sBehindCount">0</div>
+            <div class="lbl">Behind Schedule</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="stat-card" style="border-top-color:var(--warning)">
+            <div class="val" id="sTeamUtil">0%</div>
+            <div class="lbl">Team Utilisation</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="scheduleList" class="d-flex flex-column gap-0"></div>
+      <div id="noSchedMsg" class="text-muted text-center py-5 d-none">
+        <i class="bi bi-calendar3" style="font-size:2rem;opacity:.3"></i>
+        <div class="mt-2">No projects scheduled yet.</div>
+      </div>
+      <!-- Resource Daily Schedule table — rendered by renderResourceDailySchedule() -->
+      <div id="resDailySection"></div>
     </div>
   </div><!-- /content -->
 </div><!-- /appShell -->
@@ -607,6 +715,279 @@
   </div>
 </div>
 
+<!-- Projects Drill-down Modal -->
+<div class="modal fade" id="projectsDrillModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,var(--primary),var(--pl));color:white">
+        <h5 class="modal-title fw-bold" id="projDrillTitle"><i class="bi bi-folder2-open me-2"></i>Projects</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="projDrillBody" style="padding:.75rem 1rem"></div>
+      <div class="modal-footer py-2">
+        <small class="text-muted me-auto" id="projDrillCount"></small>
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add / Edit Schedule Modal -->
+<div class="modal fade" id="scheduleModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,var(--primary),var(--pl));color:white">
+        <h5 class="modal-title fw-bold" id="schedModalTitle">Add Project Schedule</h5>
+        <button type="button" class="btn-close btn-close-white" onclick="schedModal&&schedModal.hide()"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="editSchedId">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Project *</label>
+            <select id="schedProject" class="form-select" onchange="onSchedProjectChange()"></select>
+            <!-- Inline quick-add shown when "➕ New project" is selected -->
+            <div id="newProjInline" style="display:none;margin-top:.5rem;background:#f3f4fb;border-radius:8px;padding:.65rem .75rem;border:1px dashed var(--pl)">
+              <div class="fw-semibold text-primary mb-2" style="font-size:.83rem"><i class="bi bi-plus-circle me-1"></i>Quick-add new project</div>
+              <div class="row g-2">
+                <div class="col-5">
+                  <input type="text" id="qpNum" class="form-control form-control-sm" placeholder="Number (e.g. PSS-010)">
+                </div>
+                <div class="col-7">
+                  <input type="text" id="qpName" class="form-control form-control-sm" placeholder="Project name">
+                </div>
+                <div class="col-6">
+                  <input type="date" id="qpStart" class="form-control form-control-sm">
+                </div>
+                <div class="col-6">
+                  <input type="date" id="qpEnd" class="form-control form-control-sm" placeholder="End date (optional)">
+                </div>
+                <div class="col-6">
+                  <input type="number" id="qpValue" class="form-control form-control-sm" placeholder="Value ₹ (optional)" min="0">
+                </div>
+                <div class="col-6">
+                  <input type="text" id="qpDesc" class="form-control form-control-sm" placeholder="Client / description">
+                </div>
+              </div>
+              <div class="text-muted mt-1" style="font-size:.74rem">Project will be created automatically on Save.</div>
+            </div>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label fw-semibold">Urgency</label>
+            <select id="schedUrgency" class="form-select">
+              <option value="High">🔴 High</option>
+              <option value="Medium" selected>🟡 Medium</option>
+              <option value="Low">🟢 Low</option>
+            </select>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label fw-semibold">Status</label>
+            <select id="schedStatus" class="form-select" onchange="onSchedStatusChange()">
+              <option value="Active">🟢 Active</option>
+              <option value="On Hold">⏸ On Hold</option>
+              <option value="Completed">✅ Completed</option>
+              <option value="Cancelled">❌ Cancelled</option>
+            </select>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label fw-semibold">Project Type</label>
+            <select id="schedProjType" class="form-select">
+              <option value="">— type —</option>
+            </select>
+          </div>
+
+          <!-- Project Value & Description -->
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Project Value (₹)</label>
+            <input type="number" id="schedProjValue" class="form-control" placeholder="0" min="0" step="1000">
+          </div>
+          <div class="col-md-8">
+            <label class="form-label fw-semibold">Client / Description</label>
+            <input type="text" id="schedProjDesc" class="form-control" placeholder="Client name or brief description">
+          </div>
+
+          <!-- Dynamic Categories & Hours -->
+          <div class="col-12 mt-2">
+            <div class="fw-semibold text-primary border-bottom pb-1 mb-1">Work Categories &amp; Planned Hours
+              <span class="text-muted fw-normal" style="font-size:.78rem"> — add every work type this project involves</span>
+            </div>
+          </div>
+          <div class="col-12">
+            <div id="schedCatList" class="d-flex flex-wrap gap-2 mb-2 min-h-1"></div>
+            <div class="d-flex flex-wrap gap-2 align-items-end">
+              <div>
+                <label class="form-label" style="font-size:.8rem">Pick from settings</label>
+                <select id="schedCatPicker" class="form-select form-select-sm" style="min-width:155px">
+                  <option value="">— choose —</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label" style="font-size:.8rem">Or custom name</label>
+                <input type="text" id="schedCatCustom" class="form-control form-control-sm" placeholder="e.g. Site Survey" style="min-width:140px">
+              </div>
+              <div>
+                <label class="form-label" style="font-size:.8rem">Planned hours</label>
+                <input type="number" id="schedCatHrs" class="form-control form-control-sm" placeholder="0" min="0" step="0.5" style="width:85px">
+              </div>
+              <button class="btn btn-outline-primary btn-sm pb-1" onclick="addSchedCategory()">
+                <i class="bi bi-plus-lg me-1"></i>Add
+              </button>
+            </div>
+            <div class="text-muted mt-1" style="font-size:.76rem">
+              Total planned: <span id="schedTotalHrs" class="fw-semibold text-primary">0</span>h &nbsp;·&nbsp;
+              New categories are auto-added to the work category dropdown for logging time.
+            </div>
+          </div>
+
+          <!-- Per-project Resource Assignment -->
+          <div class="col-12 mt-2">
+            <div class="fw-semibold text-primary border-bottom pb-1 mb-2">Assign Resources to This Project
+              <span class="text-muted fw-normal" style="font-size:.78rem"> — only assigned members appear here; allocation % is specific to this project</span>
+            </div>
+            <!-- Assign-member picker -->
+            <div class="d-flex gap-2 align-items-end mb-2">
+              <div>
+                <label class="form-label" style="font-size:.8rem">Add team member</label>
+                <select id="schedMemberPicker" class="form-select form-select-sm" style="min-width:180px">
+                  <option value="">— select member —</option>
+                </select>
+              </div>
+              <button class="btn btn-outline-primary btn-sm pb-1" onclick="addSchedMember()">
+                <i class="bi bi-person-plus me-1"></i>Assign
+              </button>
+            </div>
+            <!-- Dynamic allocation table (rows = assigned members, cols = categories) -->
+            <div id="noMembersMsg" class="text-muted" style="font-size:.8rem;padding:.25rem 0">No members assigned yet.</div>
+            <div style="overflow-x:auto;display:none" id="resAllocWrap">
+              <table class="res-alloc-table" id="resAllocDynTable" style="min-width:300px">
+                <thead id="resAllocHead"></thead>
+                <tbody id="resourceAllocBody"></tbody>
+              </table>
+            </div>
+            <div class="res-daily-sum mt-1" id="allocTotalsRow"></div>
+          </div>
+
+          <!-- Status reason note (shown only for On Hold / Cancelled) -->
+          <div class="col-12" id="statusNoteWrap" style="display:none">
+            <label class="form-label fw-semibold">Reason / Notes</label>
+            <textarea id="statusChangeNote" class="form-control form-control-sm" rows="2"
+              placeholder="Reason for hold or cancellation…"></textarea>
+          </div>
+
+          <!-- General schedule notes (visible when editing) -->
+          <div class="col-12" id="schedNotesWrap">
+            <label class="form-label fw-semibold">Schedule Notes <span class="text-muted fw-normal" style="font-weight:400">(optional — e.g. allocation changed, end date revised)</span></label>
+            <textarea id="schedNotes" class="form-control form-control-sm" rows="2"
+              placeholder="e.g. Allocation adjusted after scope change — end date moved from 15 Apr to 1 May"></textarea>
+          </div>
+
+          <div class="col-12 mt-2">
+            <div class="fw-semibold text-primary border-bottom pb-1 mb-1">Timeline</div>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Start Date *</label>
+            <input type="date" id="schedStart" class="form-control">
+          </div>
+          <div class="col-md-3 d-flex align-items-end">
+            <button class="btn btn-outline-secondary btn-sm w-100" onclick="calcSuggestedStart()" title="Suggest start date based on when assigned resources are free">
+              <i class="bi bi-person-check me-1"></i>Suggest Start
+            </button>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">End Date <span class="text-muted fw-normal">(optional)</span></label>
+            <input type="date" id="schedEnd" class="form-control">
+          </div>
+          <div class="col-md-3 d-flex align-items-end">
+            <button class="btn btn-outline-primary btn-sm w-100" onclick="calcSuggestedEnd()">
+              <i class="bi bi-calculator me-1"></i>Suggest End
+            </button>
+          </div>
+          <div class="col-12">
+            <div id="schedSuggestion" class="alert alert-info py-2 d-none" style="font-size:.85rem"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="schedModal&&schedModal.hide()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveSchedule()">
+          <i class="bi bi-cloud-upload me-1"></i>Save Schedule
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Behind Schedule Login Popup -->
+<div class="modal fade" id="behindSchedModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header" style="background:var(--danger);color:white">
+        <h5 class="modal-title fw-bold">
+          <i class="bi bi-exclamation-triangle-fill me-2"></i>Action Required
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="behindSchedBody">
+        <p class="text-danger fw-semibold mb-2">The following projects are behind schedule:</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Dismiss</button>
+        <button class="btn btn-danger btn-sm" data-bs-dismiss="modal" onclick="showPage('schedule')">
+          <i class="bi bi-calendar3 me-1"></i>View Schedule
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Resource Conflict Warning Modal -->
+<div class="modal fade" id="conflictModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#e65100;color:white">
+        <h5 class="modal-title fw-bold"><i class="bi bi-exclamation-triangle-fill me-2"></i>Resource Overallocation Warning</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="conflictBody"></div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Keep Assignment (proceed)</button>
+        <button class="btn btn-outline-danger btn-sm" data-bs-dismiss="modal" onclick="removeLastSchedMember()">
+          <i class="bi bi-person-dash me-1"></i>Remove &amp; Adjust First
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Freed Hours Reallocation Modal -->
+<div class="modal fade" id="freedHoursModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header" style="background:var(--success);color:white">
+        <h5 class="modal-title fw-bold"><i class="bi bi-arrow-left-right me-2"></i>Resources Now Available</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2" style="font-size:.9rem">The following resources have been freed up. Would you like to assign these hours to another active project?</p>
+        <table class="table table-sm table-bordered mb-3">
+          <thead class="table-light">
+            <tr><th>Member</th><th class="text-center">Freed %</th><th class="text-center">Daily Hrs</th></tr>
+          </thead>
+          <tbody id="freedHoursBody"></tbody>
+        </table>
+        <label class="form-label fw-semibold">Assign to project:</label>
+        <select id="freedTargetProject" class="form-select"></select>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Dismiss</button>
+        <button class="btn btn-success btn-sm" onclick="assignFreedHoursToProject()">
+          <i class="bi bi-arrow-right-circle me-1"></i>Go to Project &amp; Edit
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Stop + Notes Modal -->
 <div class="modal fade" id="stopNotesModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
   <div class="modal-dialog">
@@ -717,7 +1098,7 @@ let S = {
     currency       : '₹',
     projectTypes   : ['Load Flow','Short Circuit','Protection','Arc Flash','Harmonics','Other'],
     statusOptions  : ['Active','On Hold','Completed','Cancelled'],
-    workCategories : ['Modelling','Analysis','Report','Meeting','Review','Admin']
+    workCategories : ['Simulation','Modelling','Analysis','Report','Meeting','Review','Admin']
   }
 };
 
@@ -731,6 +1112,25 @@ let logUserView  = 'all';
 let barChart     = null;
 let pieChart     = null;
 let dashSessions = [];  // sessions currently shown in dashboard — used for drill-down
+let dashProjMap  = {};  // projectId → {secs,count,users} — built by renderDashboard for drill-down
+
+// Schedule planner
+let scheduleEntries = [];
+let allProjectHrsMap = {};   // projectId → all-time logged hrs; populated by renderSchedule()
+let unsubSchedule   = null;
+let unsubTeam       = null;
+let schedModal      = null;
+let schedCategoryRows    = []; // [{name, plannedHours}] — working state inside modal
+let schedAssignedMembers = []; // [{id, name, allocations:{catName:pct}}] — who is on THIS project
+const TEAM_SIZE     = 4;
+const WEEKLY_HRS    = 48;  // per member per week (8 hrs × 6 days)
+const DAILY_HRS     = 8;   // working hours per member per day
+let teamMembers = [
+  {id:'m1', name:'Member 1', email:''},
+  {id:'m2', name:'Member 2', email:''},
+  {id:'m3', name:'Member 3', email:''},
+  {id:'m4', name:'Member 4', email:''},
+];
 
 // Bootstrap modal instances
 let projModal, sessModal, stopModal;
@@ -884,6 +1284,23 @@ function setupListeners(){
     showToast('⚠ Live sync error — check Firestore rules', 'danger');
   });
 
+  // Schedules — real-time
+  unsubSchedule = db.collection('schedules').orderBy('createdAt').onSnapshot(snap => {
+    scheduleEntries = snap.docs.map(d => ({id: d.id, ...d.data()}));
+    if (!document.getElementById('page-schedule').classList.contains('d-none')) renderSchedule();
+    // (Projects tab removed — projects managed from Schedule tab)
+  }, err => console.warn('schedule listener', err));
+
+  // Team members — real-time
+  unsubTeam = db.collection('appSettings').doc('teamMembers').onSnapshot(snap => {
+    if (snap.exists && snap.data().members?.length) {
+      teamMembers = snap.data().members;
+    }
+    if (!document.getElementById('page-settings').classList.contains('d-none')) {
+      renderTeamMembersSettings();
+    }
+  }, err => console.warn('teamMembers listener', err));
+
   if (navigator.onLine) setSyncStatus(true);
 }
 
@@ -892,6 +1309,8 @@ function teardownListeners(){
   if (unsubSess) { unsubSess(); unsubSess=null; }
   if (unsubCfg)  { unsubCfg();  unsubCfg=null;  }
   if (unsubLive) { unsubLive(); unsubLive=null; }
+  if (unsubSchedule) { unsubSchedule(); unsubSchedule=null; }
+  if (unsubTeam)     { unsubTeam();     unsubTeam=null; }
 }
 
 function setSyncStatus(online, pendingCount){
@@ -1044,8 +1463,9 @@ function onUserReady(){
 
   // Show admin-only UI elements
   const adminOnly = isAdmin();
-  document.getElementById('addProjBtn').style.display       = adminOnly ? '' : 'none';
   document.getElementById('adminDataSection').style.display = adminOnly ? '' : 'none';
+  document.getElementById('addSchedBtn').style.display      = adminOnly ? '' : 'none';
+  renderTeamMembersSettings();
   // Non-admins only see their own time (no "All Team" toggle)
   document.getElementById('dashViewAll').style.display = adminOnly ? '' : 'none';
   document.getElementById('dashViewMe').style.display  = adminOnly ? '' : 'none';
@@ -1058,23 +1478,29 @@ function onUserReady(){
   // Sync any queued sessions from a previous offline session
   if (navigator.onLine) syncOfflineQueue();
   else setSyncStatus(false);
+  // Check behind-schedule after a short delay (allow Firestore to load schedules)
+  setTimeout(checkBehindSchedule, 3000);
 }
 
 /* ═══════════════════════════════════════════════════════════════
    NAVIGATION
 ═══════════════════════════════════════════════════════════════ */
 function showPage(page){
-  ['timer','projects','sessions','dashboard','settings'].forEach(p=>{
+  ['timer','sessions','dashboard','settings','schedule'].forEach(p=>{
     document.getElementById('page-'+p).classList.add('d-none');
-    document.getElementById('nav-'+p).classList.remove('active');
+    const navEl = document.getElementById('nav-'+p);
+    if (navEl) navEl.classList.remove('active');
   });
-  document.getElementById('page-'+page).classList.remove('d-none');
-  document.getElementById('nav-'+page).classList.add('active');
+  const pageEl = document.getElementById('page-'+page);
+  if (!pageEl) return;
+  pageEl.classList.remove('d-none');
+  const navEl = document.getElementById('nav-'+page);
+  if (navEl) navEl.classList.add('active');
 
-  if (page==='projects')  renderProjects();
   if (page==='sessions')  renderSessionLog();
   if (page==='dashboard') renderDashboard();
   if (page==='settings')  renderSettingsUI();
+  if (page==='schedule')  renderSchedule();
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1172,7 +1598,7 @@ function restoreTimers(){
 }
 
 function addSlot(){
-  if (!S.projects.length){ alert('Add a project first.'); showPage('projects'); return; }
+  if (!S.projects.length){ showToast('Add a project first via the Schedule tab', 'warning'); showPage('schedule'); return; }
   populateProjectDropdowns();
   sessModal.show();
 }
@@ -1655,32 +2081,50 @@ function renderProjects(){
   noMsg.classList.add('d-none');
 
   S.projects.forEach(p=>{
-    // calc logged hours from sessions
+    // Calc logged hours from sessions
     const loggedHrs = S.sessions
       .filter(s=>s.projectId===p.id)
       .reduce((sum,s)=>sum+s.duration/3600, 0);
-    const pct = p.plannedHours ? Math.min(100, Math.round(loggedHrs/p.plannedHours*100)) : 0;
-    const over = p.plannedHours && loggedHrs > p.plannedHours;
+    const pct      = p.plannedHours ? Math.min(100, Math.round(loggedHrs/p.plannedHours*100)) : 0;
+    const over     = p.plannedHours && loggedHrs > p.plannedHours;
 
-    const badgeCol = {Active:'success',Completed:'primary','On Hold':'warning',Cancelled:'secondary'}[p.status]||'secondary';
+    // Use live schedStatus from scheduleEntries (real-time) rather than stale p.status
+    const schedEntry   = scheduleEntries.find(e => e.projectId === p.id);
+    const liveStatus   = schedEntry?.schedStatus || p.status || 'Active';
+    const liveCats     = schedEntry?.categories  || p.categories || [];
+    const liveType     = schedEntry ? (S.projects.find(x=>x.id===p.id)?.type || p.type || '') : (p.type || '');
+
+    const badgeCol = {'Active':'success','Completed':'success','On Hold':'warning','Cancelled':'secondary'}[liveStatus]||'secondary';
+    const badgeStyle = liveStatus==='On Hold'
+      ? 'style="background:#ede7f6;color:#6a1b9a;border:none"'
+      : liveStatus==='Cancelled'
+        ? 'style="background:#f5f5f5;color:#757575;border:none"'
+        : '';
+
     const card = document.createElement('div');
     card.className='proj-card';
     card.innerHTML=`
       <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
         <div style="flex:1;min-width:200px">
-          <div class="d-flex align-items-center gap-2 mb-1">
+          <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
             <span class="fw-bold text-primary">${esc(p.num)}</span>
-            <span class="badge bg-${badgeCol}">${esc(p.status||'Active')}</span>
-            ${p.type?`<span class="badge bg-light text-dark border">${esc(p.type)}</span>`:''}
+            <span class="badge bg-${badgeCol}" ${badgeStyle}>${esc(liveStatus)}</span>
+            ${liveType?`<span class="badge bg-light text-dark border">${esc(liveType)}</span>`:''}
+            ${over?`<span class="badge" style="background:#fde8e8;color:var(--danger);font-weight:700;font-size:.73rem">⚠ Exhausted</span>`:''}
           </div>
           <div class="fw-semibold mb-1">${esc(p.name)}</div>
           ${p.desc?`<div class="text-muted" style="font-size:.82rem">${esc(p.desc)}</div>`:''}
+          ${liveCats.length ? `
+          <div class="d-flex flex-wrap gap-1 mt-2">
+            ${liveCats.map(c=>`<span class="badge bg-light text-dark border" style="font-size:.73rem;font-weight:500">${esc(c.name)}: <strong>${c.plannedHours}h</strong></span>`).join('')}
+          </div>` : ''}
         </div>
         <div class="text-end" style="min-width:180px">
           ${p.value?`<div class="fw-semibold">${S.settings.currency||'₹'}${Number(p.value).toLocaleString('en-IN')}</div>`:''}
           <div class="text-muted" style="font-size:.82rem">
             ${loggedHrs.toFixed(1)}h / ${p.plannedHours||'?'}h planned
           </div>
+          ${(p.startDate||p.endDate)?`<div class="text-muted" style="font-size:.77rem">${p.startDate||'?'} → ${p.endDate||'ongoing'}</div>`:''}
           ${isAdmin() ? `
           <div class="d-flex gap-2 mt-2 justify-content-end">
             <button class="btn btn-outline-primary btn-sm" onclick="editProject('${p.id}')">
@@ -1692,11 +2136,14 @@ function renderProjects(){
       </div>
       ${p.plannedHours ? `
       <div class="mt-2">
-        <div class="d-flex justify-content-between" style="font-size:.78rem;color:#888">
-          <span>Progress</span><span>${pct}%${over?' ⚠ Over budget':''}</span>
+        <div class="d-flex justify-content-between align-items-center" style="font-size:.78rem;color:#888">
+          <span>Progress</span>
+          ${over
+            ? `<span class="badge" style="background:#fde8e8;color:var(--danger);font-weight:700;font-size:.74rem">⚠ ${loggedHrs.toFixed(1)}h / ${p.plannedHours}h</span>`
+            : `<span>${pct}%</span>`}
         </div>
         <div class="progress mt-1">
-          <div class="progress-bar${over?' over':''}" style="width:${pct}%"></div>
+          <div class="progress-bar${over?' over':''}" style="width:${Math.min(100,pct)}%"></div>
         </div>
       </div>` : ''}`;
     list.appendChild(card);
@@ -1822,10 +2269,34 @@ async function renderDashboard(){
   const projIds    = [...new Set(sessions.map(s=>s.projectId))];
   const avgSession = sessions.length ? totalSecs/sessions.length : 0;
 
-  document.getElementById('dTotalHours').textContent    = totalHrs.toFixed(1)+'h';
-  document.getElementById('dActiveProjCount').textContent = projIds.length;
+  document.getElementById('dTotalHours').textContent   = totalHrs.toFixed(1)+'h';
   document.getElementById('dSessionCount').textContent  = sessions.length;
   document.getElementById('dAvgSession').textContent    = secsToHMS(avgSession);
+  document.getElementById('dAllProjCount').textContent  = projIds.length;
+
+  // Schedule health tiles — use live scheduleEntries (not period-filtered)
+  const _activeEntries = scheduleEntries.filter(e=>!['Cancelled','On Hold','Completed'].includes(e.schedStatus));
+  const _onHoldEntries = scheduleEntries.filter(e=>e.schedStatus==='On Hold');
+  let _exhaustedCount  = 0;
+  scheduleEntries.forEach(e=>{
+    const totalP = e.categories?.length
+      ? e.categories.reduce((s,c)=>s+c.plannedHours,0)
+      : (e.simulationHours||0)+(e.modellingHours||0);
+    if (totalP > 0 && (allProjectHrsMap[e.projectId]||0) > totalP) _exhaustedCount++;
+  });
+  document.getElementById('dActiveProjCount').textContent = _activeEntries.length;
+  document.getElementById('dOnHoldCount').textContent     = _onHoldEntries.length;
+  document.getElementById('dExhaustedCount').textContent  = _exhaustedCount;
+
+  // Portfolio value — sum of all projects (regardless of period)
+  const totalValue = S.projects.reduce((s,p)=>s+(p.value||0), 0);
+  const cur = S.settings.currency || '₹';
+  const fmtVal = totalValue >= 1e7
+    ? `${cur}${(totalValue/1e7).toFixed(2)} Cr`
+    : totalValue >= 1e5
+      ? `${cur}${(totalValue/1e5).toFixed(1)} L`
+      : `${cur}${totalValue.toLocaleString('en-IN')}`;
+  document.getElementById('dPortfolioValue').textContent = fmtVal;
 
   // Per-project aggregation
   const projMap = {};
@@ -1885,23 +2356,32 @@ async function renderDashboard(){
     const breakdown = Object.entries(pm.users)
       .map(([n,h])=>`<span class="user-chip">${esc(n)}: ${h.toFixed(1)}h</span>`).join(' ');
 
+    const valStr = p.value
+      ? `<span style="color:#00796b;font-weight:600">${S.settings.currency||'₹'}${Number(p.value).toLocaleString('en-IN')}</span>`
+      : `<span class="text-muted" style="font-size:.8rem">—</span>`;
     tbody.innerHTML+=`
       <tr>
         <td><span class="fw-semibold text-primary">${esc(p.num)}</span> ${esc(p.name)}</td>
+        <td>${valStr}</td>
         <td class="fw-semibold">${hrs.toFixed(1)}h</td>
         <td>${pm.count}</td>
         <td>${breakdown}</td>
-        <td style="min-width:120px">
+        <td style="min-width:140px">
           ${pct!==null ? `
             <div class="progress mb-1" style="height:6px">
-              <div class="progress-bar${over?' over':''}" style="width:${pct}%"></div>
+              <div class="progress-bar${over?' over':''}" style="width:${Math.min(100,pct)}%"></div>
             </div>
-            <small class="${over?'text-danger':'text-muted'}">${pct}%${over?' over':''}</small>
+            ${over
+              ? `<span class="badge" style="background:#fde8e8;color:var(--danger);font-weight:700;font-size:.75rem;padding:.2rem .5rem">⚠ Exhausted — ${hrs.toFixed(1)}h / ${p.plannedHours}h</span>`
+              : `<small class="text-muted">${pct}% of ${p.plannedHours}h</small>`}
           ` : '<small class="text-muted">No budget</small>'}
         </td>
       </tr>`;
   });
-  if (!labels.length) tbody.innerHTML='<tr><td colspan="5" class="text-center text-muted py-3">No sessions in this period.</td></tr>';
+  if (!labels.length) tbody.innerHTML='<tr><td colspan="6" class="text-center text-muted py-3">No sessions in this period.</td></tr>';
+
+  // Store for period-based project drill-down ('all' type)
+  dashProjMap = projMap;
 }
 
 function showSessionsDrilldown(){
@@ -1946,6 +2426,164 @@ function showSessionsDrilldown(){
   modal.show();
 }
 
+function showProjectsDrilldown(type){
+  let entries, title, emptyMsg;
+
+  if (type === 'active'){
+    entries  = scheduleEntries.filter(e=>!['Cancelled','On Hold','Completed'].includes(e.schedStatus));
+    title    = '✅ Active Projects';
+    emptyMsg = 'No active projects in schedule.';
+  } else if (type === 'exhausted'){
+    entries  = scheduleEntries.filter(e=>{
+      const totalP = e.categories?.length
+        ? e.categories.reduce((s,c)=>s+c.plannedHours,0)
+        : (e.simulationHours||0)+(e.modellingHours||0);
+      return totalP > 0 && (allProjectHrsMap[e.projectId]||0) > totalP;
+    });
+    title    = '⚠ Exhausted Projects';
+    emptyMsg = 'No exhausted projects.';
+  } else if (type === 'onhold'){
+    entries  = scheduleEntries.filter(e=>e.schedStatus==='On Hold');
+    title    = '⏸ On Hold Projects';
+    emptyMsg = 'No projects are on hold.';
+  } else if (type === 'value'){
+    // All projects with a value > 0, sorted by value descending
+    const valued = [...S.projects].filter(p => (p.value||0) > 0).sort((a,b)=>(b.value||0)-(a.value||0));
+    const cur2 = S.settings.currency || '₹';
+    const totalVal = valued.reduce((s,p)=>s+(p.value||0), 0);
+
+    document.getElementById('projDrillTitle').innerHTML =
+      `<i class="bi bi-currency-rupee me-1"></i>Portfolio Value`;
+    document.getElementById('projDrillCount').textContent =
+      `${valued.length} project${valued.length!==1?'s':''} · Total: ${cur2}${totalVal.toLocaleString('en-IN')}`;
+
+    const body = document.getElementById('projDrillBody');
+    if (!valued.length){
+      body.innerHTML = `<p class="text-center text-muted py-4">No projects have a value set. Use "Project Info" on a schedule card to add value.</p>`;
+    } else {
+      const maxVal = valued[0].value || 1;
+      body.innerHTML = valued.map(p => {
+        const schedEntry2 = scheduleEntries.find(e=>e.projectId===p.id);
+        const liveStatus2 = schedEntry2?.schedStatus || p.status || 'Active';
+        const loggedHrs2  = S.sessions.filter(s=>s.projectId===p.id).reduce((s,x)=>s+(x.duration||0)/3600,0);
+        const barPct = Math.round((p.value / maxVal) * 100);
+        const statusCls = {'Active':'bg-success','Completed':'bg-success','On Hold':'bg-warning text-dark','Cancelled':'bg-secondary'}[liveStatus2]||'bg-primary';
+        return `
+          <div class="proj-card mb-2">
+            <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+              <div>
+                <span class="fw-bold text-primary">${esc(p.num||'—')}</span>
+                <span class="fw-semibold ms-1">${esc(p.name||'Unnamed')}</span>
+                <span class="badge ${statusCls} ms-1" style="font-size:.72rem">${esc(liveStatus2)}</span>
+                ${p.type?`<span class="badge bg-light text-dark border ms-1">${esc(p.type)}</span>`:''}
+              </div>
+              <div class="fw-bold" style="color:#00796b;font-size:1.05rem">${cur2}${(p.value||0).toLocaleString('en-IN')}</div>
+            </div>
+            <div class="progress mt-2" style="height:5px">
+              <div class="progress-bar" style="width:${barPct}%;background:#00796b"></div>
+            </div>
+            <div class="d-flex justify-content-between mt-1" style="font-size:.76rem;color:#888">
+              <span>${p.desc ? esc(p.desc) : '<i>No description</i>'}</span>
+              <span>${loggedHrs2.toFixed(1)}h logged${p.plannedHours ? ' / '+p.plannedHours+'h planned' : ''}</span>
+            </div>
+          </div>`;
+      }).join('');
+    }
+    (new bootstrap.Modal(document.getElementById('projectsDrillModal'))).show();
+    return;
+  } else { // 'all' — projects with sessions in current dashboard period
+    const periodProjIds = [...new Set(dashSessions.map(s=>s.projectId))];
+    entries  = scheduleEntries.filter(e=>periodProjIds.includes(e.projectId));
+    // Also include period projects that have no schedule entry
+    const noSched = periodProjIds.filter(pid=>!scheduleEntries.find(e=>e.projectId===pid));
+    const extraEntries = noSched.map(pid=>{
+      const p = S.projects.find(x=>x.id===pid);
+      return p ? { projectId:pid, _noSched:true } : null;
+    }).filter(Boolean);
+    entries = [...entries, ...extraEntries];
+    title    = 'Projects This Period';
+    emptyMsg = 'No projects in this period.';
+  }
+
+  document.getElementById('projDrillTitle').innerHTML =
+    `<i class="bi bi-folder2-open me-2"></i>${esc(title)}`;
+  document.getElementById('projDrillCount').textContent =
+    `${entries.length} project${entries.length!==1?'s':''}`;
+
+  const body = document.getElementById('projDrillBody');
+  if (!entries.length){
+    body.innerHTML = `<p class="text-center text-muted py-4">${emptyMsg}</p>`;
+  } else {
+    body.innerHTML = entries.map(e=>{
+      const proj   = S.projects.find(p=>p.id===e.projectId) || {};
+      const totalP = e._noSched ? (proj.plannedHours||0)
+        : (e.categories?.length
+            ? e.categories.reduce((s,c)=>s+c.plannedHours,0)
+            : (e.simulationHours||0)+(e.modellingHours||0));
+      const actualHrs  = allProjectHrsMap[e.projectId] || 0;
+      const periodHrs  = (dashProjMap[e.projectId]?.secs||0) / 3600;
+      const isExhausted= totalP > 0 && actualHrs > totalP;
+      const pct        = totalP > 0 ? Math.min(100, Math.round(actualHrs/totalP*100)) : null;
+
+      const statusBadge = e._noSched
+        ? `<span class="badge bg-secondary ms-1">No schedule</span>`
+        : (() => {
+            const s = e.schedStatus || 'Active';
+            const cls= {Active:'bg-success',Completed:'bg-success','On Hold':'bg-warning text-dark',Cancelled:'bg-secondary'}[s]||'bg-primary';
+            return `<span class="badge ${cls} ms-1">${esc(s)}</span>`;
+          })();
+
+      const exhaustedBadge = isExhausted
+        ? `<span class="badge ms-1" style="background:#fde8e8;color:var(--danger)">⚠ Exhausted</span>`
+        : '';
+
+      const resources = (e.resources||[]).map(r=>{
+        const tm = teamMembers.find(m=>m.id===r.id);
+        const name = tm?.name || r.name || r.id;
+        const allocPct = Object.values(r.allocations||{}).reduce((s,v)=>s+v,0) || (r.simPct||0)+(r.modPct||0);
+        return `<span class="user-chip" style="font-size:.75rem">${esc(name)}${allocPct?` ${allocPct}%`:''}</span>`;
+      }).join(' ');
+
+      const dateRange = (e.startDate||e.endDate)
+        ? `<span class="text-muted" style="font-size:.78rem"><i class="bi bi-calendar3 me-1"></i>${e.startDate||'?'} → ${e.endDate||'ongoing'}</span>`
+        : '';
+
+      const progressBar = pct!==null ? `
+        <div class="mt-2">
+          <div class="d-flex justify-content-between mb-1" style="font-size:.77rem">
+            <span>${actualHrs.toFixed(1)}h logged / ${totalP}h planned</span>
+            <span>${pct}%</span>
+          </div>
+          <div class="progress" style="height:6px">
+            <div class="progress-bar${isExhausted?' bg-danger':''}" style="width:${Math.min(100,pct)}%;${isExhausted?'':'background:linear-gradient(90deg,var(--pl),var(--primary))'}"></div>
+          </div>
+        </div>` : '';
+
+      const periodRow = periodHrs > 0
+        ? `<div style="font-size:.78rem;color:#666;margin-top:.3rem"><i class="bi bi-clock-history me-1"></i>${periodHrs.toFixed(1)}h logged this period</div>`
+        : '';
+
+      return `
+        <div class="proj-card mb-2" style="border-left-color:${isExhausted?'var(--danger)':e.schedStatus==='On Hold'?'#9c27b0':e.schedStatus==='Completed'?'var(--success)':e.schedStatus==='Cancelled'?'#9e9e9e':'var(--pl)'}">
+          <div class="d-flex align-items-start justify-content-between gap-2 flex-wrap">
+            <div>
+              <span class="fw-semibold text-primary">${esc(proj.num||'—')}</span>
+              <span class="fw-semibold ms-1">${esc(proj.name||e.projectId||'Unknown')}</span>
+              ${statusBadge}${exhaustedBadge}
+            </div>
+            ${dateRange}
+          </div>
+          ${progressBar}
+          ${periodRow}
+          ${resources ? `<div class="mt-2">${resources}</div>` : ''}
+          ${e.statusNote ? `<div class="mt-1 text-muted" style="font-size:.78rem;font-style:italic"><i class="bi bi-chat-left-text me-1"></i>${esc(e.statusNote)}</div>` : ''}
+        </div>`;
+    }).join('');
+  }
+
+  (new bootstrap.Modal(document.getElementById('projectsDrillModal'))).show();
+}
+
 /* ═══════════════════════════════════════════════════════════════
    SETTINGS
 ═══════════════════════════════════════════════════════════════ */
@@ -1959,6 +2597,7 @@ function renderSettingsUI(){
 
   // Show data management section only for admin
   document.getElementById('adminDataSection').style.display = isAdmin() ? '' : 'none';
+  renderTeamMembersSettings();
 }
 
 function renderListUI(key, containerId){
@@ -2242,6 +2881,1362 @@ function populateProjectDropdowns(){
       if (p.id===prev) o.selected=true;
       pfSel.appendChild(o);
     });
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SCHEDULE PLANNER
+═══════════════════════════════════════════════════════════════ */
+
+/* Get schedule status for an entry given actual hours logged */
+/* ── TEAM MEMBERS SETTINGS ─────────────────────────────────────────── */
+function renderTeamMembersSettings(){
+  const form = document.getElementById('teamMembersForm');
+  const saveBtn = document.getElementById('saveTeamBtn');
+  if (!form) return;
+  const admin = isAdmin();
+  form.innerHTML = teamMembers.map((m, i) => `
+    <div class="col-md-3 col-sm-6">
+      <label class="form-label" style="font-size:.8rem;color:#555;font-weight:600">Member ${i+1}</label>
+      <input type="text" class="form-control form-control-sm team-name-input mb-1"
+        data-idx="${i}" value="${esc(m.name)}" placeholder="Name" ${admin ? '' : 'readonly'}>
+      <input type="email" class="form-control form-control-sm team-email-input"
+        data-idx="${i}" value="${esc(m.email||'')}" placeholder="Email (for log matching)"
+        style="font-size:.78rem" ${admin ? '' : 'readonly'}>
+    </div>`).join('');
+  if (saveBtn) saveBtn.style.display = admin ? '' : 'none';
+}
+
+async function saveTeamMembers(){
+  const nameInputs  = document.querySelectorAll('.team-name-input');
+  const emailInputs = document.querySelectorAll('.team-email-input');
+  const members = teamMembers.map((m, i) => ({
+    ...m,
+    name:  (nameInputs[i]?.value||'').trim()  || m.name,
+    email: (emailInputs[i]?.value||'').trim().toLowerCase(),
+  }));
+  try {
+    await db.collection('appSettings').doc('teamMembers').set({ members });
+    teamMembers = members;
+    showToast('Team members saved ✓', 'success');
+  } catch(e){
+    showToast('Save failed: '+e.message, 'danger');
+  }
+}
+
+/* ── RESOURCE ALLOCATION TABLE ─────────────────────────────────────── */
+function renderResourceTable(existingResources){
+  const tbody = document.getElementById('resourceAllocBody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  teamMembers.forEach(m => {
+    const ex = (existingResources||[]).find(r => r.id === m.id) || {};
+    const sp = ex.simPct || 0;
+    const mp = ex.modPct || 0;
+    const daily = ((sp + mp) / 100 * DAILY_HRS).toFixed(1);
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td class="fw-semibold" style="font-size:.83rem">${esc(m.name)}</td>
+      <td><input type="number" class="res-sim-pct" data-mid="${m.id}"
+        value="${sp}" min="0" max="100" oninput="updateAllocTotals()"></td>
+      <td><input type="number" class="res-mod-pct" data-mid="${m.id}"
+        value="${mp}" min="0" max="100" oninput="updateAllocTotals()"></td>
+      <td class="fw-semibold res-daily" id="resDaily_${m.id}">${daily}h</td>`;
+    tbody.appendChild(row);
+  });
+  updateAllocTotals();
+}
+
+function updateAllocTotals(){
+  let simTotal = 0, modTotal = 0;
+  document.querySelectorAll('#resourceAllocBody tr').forEach(row => {
+    const sp = parseFloat(row.querySelector('.res-sim-pct')?.value) || 0;
+    const mp = parseFloat(row.querySelector('.res-mod-pct')?.value) || 0;
+    const mid = row.querySelector('.res-sim-pct')?.dataset.mid;
+    simTotal += sp / 100 * DAILY_HRS;
+    modTotal += mp / 100 * DAILY_HRS;
+    if (mid) {
+      const el = document.getElementById('resDaily_'+mid);
+      if (el) el.textContent = ((sp + mp) / 100 * DAILY_HRS).toFixed(1) + 'h';
+    }
+  });
+  const s = document.getElementById('allocTotalSim');
+  const m = document.getElementById('allocTotalMod');
+  if (s) s.textContent = simTotal.toFixed(1);
+  if (m) m.textContent = modTotal.toFixed(1);
+}
+
+function getResourceAllocData(){
+  const resources = [];
+  document.querySelectorAll('#resourceAllocBody tr').forEach((row, i) => {
+    const m = teamMembers[i];
+    if (!m) return;
+    resources.push({
+      id:     m.id,
+      name:   m.name,
+      simPct: parseFloat(row.querySelector('.res-sim-pct')?.value) || 0,
+      modPct: parseFloat(row.querySelector('.res-mod-pct')?.value) || 0,
+    });
+  });
+  return resources;
+}
+
+/* ── DYNAMIC SCHEDULE CATEGORIES ──────────────────────────────── */
+
+function populateSchedCatPicker(){
+  const sel = document.getElementById('schedCatPicker');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— choose —</option>';
+  (S.settings.workCategories||[]).forEach(c => {
+    sel.innerHTML += `<option value="${esc(c)}">${esc(c)}</option>`;
+  });
+}
+
+function renderSchedCatList(){
+  const box = document.getElementById('schedCatList');
+  if (!box) return;
+  if (!schedCategoryRows.length){
+    box.innerHTML = '<div class="text-muted" style="font-size:.8rem;padding:.25rem 0">No categories added yet.</div>';
+  } else {
+    box.innerHTML = schedCategoryRows.map((r,i) => `
+      <div class="d-flex align-items-center gap-1 px-2 py-1 rounded" style="background:#eef0f5;border:1px solid #dde0ee">
+        <span class="fw-semibold" style="font-size:.82rem">${esc(r.name)}</span>
+        <span class="text-muted" style="font-size:.77rem">&nbsp;${r.plannedHours}h</span>
+        <button class="btn p-0 ms-1 lh-1" onclick="removeSchedCategory(${i})" title="Remove">
+          <i class="bi bi-x-circle text-danger" style="font-size:.85rem"></i>
+        </button>
+      </div>`).join('');
+  }
+  // Update total
+  const total = schedCategoryRows.reduce((s,r)=>s+r.plannedHours,0);
+  const el = document.getElementById('schedTotalHrs');
+  if (el) el.textContent = total;
+  // Re-render resource table headers and totals
+  renderDynResourceTable();
+}
+
+function addSchedCategory(){
+  const picker = document.getElementById('schedCatPicker');
+  const custom = document.getElementById('schedCatCustom');
+  const hrs    = parseFloat(document.getElementById('schedCatHrs').value)||0;
+  const name   = (custom.value.trim() || picker.value).trim();
+  if (!name){ showToast('Enter a category name', 'warning'); return; }
+  if (hrs <= 0){ showToast('Enter planned hours > 0', 'warning'); return; }
+  if (schedCategoryRows.find(r => r.name.toLowerCase() === name.toLowerCase())){
+    showToast('Category already added', 'warning'); return;
+  }
+  schedCategoryRows.push({name, plannedHours: hrs});
+  // Clear inputs
+  picker.value = ''; custom.value = '';
+  document.getElementById('schedCatHrs').value = '';
+  renderSchedCatList();
+}
+
+function removeSchedCategory(idx){
+  schedCategoryRows.splice(idx,1);
+  renderSchedCatList();
+}
+
+/* Populate the "Add team member" dropdown with unassigned members */
+function populateSchedMemberPicker(){
+  const sel = document.getElementById('schedMemberPicker');
+  if (!sel) return;
+  const assignedIds = new Set(schedAssignedMembers.map(m=>m.id));
+  sel.innerHTML = '<option value="">— select member —</option>';
+  teamMembers.filter(m => !assignedIds.has(m.id)).forEach(m => {
+    sel.innerHTML += `<option value="${m.id}">${esc(m.name)}</option>`;
+  });
+}
+
+/* ── RESOURCE CONFLICT HELPERS ────────────────────────────────────── */
+
+/* Total allocation % a member has across ALL active entries (excluding one being edited) */
+function getMemberAllocPct(memberId, excludeEntryId){
+  return scheduleEntries
+    .filter(e => e.id !== excludeEntryId
+              && e.schedStatus !== 'Cancelled'
+              && e.schedStatus !== 'On Hold')
+    .reduce((total, e) => {
+      const r = (e.resources||[]).find(r => r.id === memberId);
+      if (!r) return total;
+      const pct = Object.values(r.allocations||{}).reduce((s,v)=>s+v,0)
+               || (r.simPct||0)+(r.modPct||0);
+      return total + pct;
+    }, 0);
+}
+
+/* Latest end date of any active project where member has >0 allocation (or is at 100%) */
+function getMemberLatestEndDate(memberId, excludeEntryId){
+  let latest = null;
+  scheduleEntries
+    .filter(e => e.id !== excludeEntryId
+              && e.schedStatus !== 'Cancelled'
+              && e.schedStatus !== 'On Hold')
+    .forEach(e => {
+      const r = (e.resources||[]).find(r => r.id === memberId);
+      if (!r || !e.endDate) return;
+      const pct = Object.values(r.allocations||{}).reduce((s,v)=>s+v,0)
+               || (r.simPct||0)+(r.modPct||0);
+      if (pct >= 100 && (!latest || e.endDate > latest)) latest = e.endDate;
+    });
+  return latest;  // "YYYY-MM-DD" or null
+}
+
+/* Describe conflicting projects for a member */
+function getMemberConflictRows(memberId, excludeEntryId){
+  return scheduleEntries
+    .filter(e => e.id !== excludeEntryId
+              && e.schedStatus !== 'Cancelled'
+              && e.schedStatus !== 'On Hold')
+    .map(e => {
+      const r = (e.resources||[]).find(r => r.id === memberId);
+      if (!r) return null;
+      const pct = Object.values(r.allocations||{}).reduce((s,v)=>s+v,0)
+               || (r.simPct||0)+(r.modPct||0);
+      if (!pct) return null;
+      const proj  = S.projects.find(p => p.id === e.projectId);
+      const endLbl = e.endDate
+        ? new Date(e.endDate).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})
+        : 'no end date';
+      return { pct, proj, endLbl, entryId: e.id };
+    }).filter(Boolean);
+}
+
+/* Remove the last member we just added (for "Remove & Adjust First" button) */
+function removeLastSchedMember(){
+  schedAssignedMembers.pop();
+  renderDynResourceTable();
+}
+
+/* Show conflict warning modal */
+function showConflictWarning(memberName, existingPct, memberId, excludeEntryId){
+  const rows = getMemberConflictRows(memberId, excludeEntryId);
+  const latestEnd = getMemberLatestEndDate(memberId, excludeEntryId);
+  const latestLbl = latestEnd
+    ? new Date(latestEnd).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})
+    : null;
+
+  document.getElementById('conflictBody').innerHTML = `
+    <div class="alert alert-warning py-2 mb-2" style="font-size:.85rem">
+      <strong>${esc(memberName)}</strong> is already
+      <strong>${existingPct}%</strong> allocated on active projects —
+      adding them here will exceed 100% capacity.
+    </div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr style="background:#fff3cd">
+        <th style="padding:.2rem .5rem;font-size:.78rem">Project</th>
+        <th style="padding:.2rem .5rem;font-size:.78rem;text-align:center">Alloc %</th>
+        <th style="padding:.2rem .5rem;font-size:.78rem">Until</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(r=>`<tr>
+          <td style="padding:.2rem .5rem;font-size:.82rem">${esc(r.proj?.num||'')} ${esc(r.proj?.name||'?')}</td>
+          <td style="padding:.2rem .5rem;font-size:.82rem;text-align:center">${r.pct}%</td>
+          <td style="padding:.2rem .5rem;font-size:.82rem">${r.endLbl}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    ${latestLbl ? `<div class="mt-2 text-muted" style="font-size:.82rem">
+      💡 <strong>Tip:</strong> Use <em>Suggest Start Date</em> — this project could start <strong>${latestLbl}</strong> after ${esc(memberName)} is free.
+      Or reduce their % on an existing project first.
+    </div>` : ''}`;
+
+  (new bootstrap.Modal(document.getElementById('conflictModal'))).show();
+}
+
+/* Add a member to this project's assignment list */
+function addSchedMember(){
+  const sel = document.getElementById('schedMemberPicker');
+  const mid = sel.value;
+  if (!mid){ showToast('Select a team member', 'warning'); return; }
+  const tm = teamMembers.find(m=>m.id===mid);
+  if (!tm) return;
+  if (schedAssignedMembers.find(m=>m.id===mid)) return;
+
+  const editId      = document.getElementById('editSchedId').value;
+  const existingPct = getMemberAllocPct(mid, editId);
+
+  schedAssignedMembers.push({ id:mid, name:tm.name, allocations:{} });
+  sel.value = '';
+  renderDynResourceTable();
+
+  if (existingPct >= 100){
+    showConflictWarning(tm.name, existingPct, mid, editId);
+  } else if (existingPct >= 60){
+    showToast(`⚠ ${tm.name} is already ${existingPct.toFixed(0)}% allocated — watch for overload`, 'warning');
+  }
+}
+
+/* Remove a member from this project */
+function removeSchedMember(mid){
+  schedAssignedMembers = schedAssignedMembers.filter(m=>m.id!==mid);
+  renderDynResourceTable();
+}
+
+/* Rebuild the allocation table — rows = assigned members, cols = categories */
+function renderDynResourceTable(existingResources){
+  // If called with existingResources arg, rebuild schedAssignedMembers from saved data
+  if (existingResources !== undefined){
+    schedAssignedMembers = (existingResources||[]).map(r => {
+      const tm = teamMembers.find(m=>m.id===r.id) || {id:r.id, name:r.name||'?'};
+      // Build allocations: prefer r.allocations, else convert legacy simPct/modPct
+      let allocs = r.allocations ? Object.assign({},r.allocations) : {};
+      if (!Object.keys(allocs).length && (r.simPct||r.modPct)){
+        schedCategoryRows.forEach(c => {
+          const cl = c.name.toLowerCase();
+          if (cl.includes('simulat')) allocs[c.name] = r.simPct||0;
+          else if (cl.includes('model')) allocs[c.name] = r.modPct||0;
+        });
+      }
+      return { id:tm.id, name:tm.name, allocations:allocs };
+    });
+  }
+
+  const thead   = document.getElementById('resAllocHead');
+  const tbody   = document.getElementById('resourceAllocBody');
+  const totRow  = document.getElementById('allocTotalsRow');
+  const wrap    = document.getElementById('resAllocWrap');
+  const noMsg   = document.getElementById('noMembersMsg');
+  if (!thead || !tbody) return;
+
+  populateSchedMemberPicker();  // refresh picker to remove already-assigned members
+
+  const cats    = schedCategoryRows;
+  const members = schedAssignedMembers;
+
+  if (!members.length){
+    thead.innerHTML = ''; tbody.innerHTML = '';
+    if (totRow) totRow.innerHTML = '';
+    if (wrap)  wrap.style.display  = 'none';
+    if (noMsg) noMsg.style.display = '';
+    return;
+  }
+  if (wrap)  wrap.style.display  = '';
+  if (noMsg) noMsg.style.display = 'none';
+
+  if (!cats.length){
+    thead.innerHTML = '';
+    tbody.innerHTML = '<tr><td colspan="10" class="text-muted" style="font-size:.8rem;padding:.5rem">Add work categories above first, then set allocation % here.</td></tr>';
+    if (totRow) totRow.innerHTML = '';
+    return;
+  }
+
+  // Header row
+  let hRow = '<tr><th>Member</th>';
+  cats.forEach(c => { hRow += `<th title="${esc(c.name)}">${esc(c.name.length>11 ? c.name.slice(0,10)+'…' : c.name)} %</th>`; });
+  hRow += '<th>Total %</th><th>Daily Hrs</th><th></th></tr>';
+  thead.innerHTML = hRow;
+
+  // Member rows
+  tbody.innerHTML = '';
+  members.forEach(m => {
+    const allocs = m.allocations || {};
+    const catCells = cats.map(c => {
+      const pct = allocs[c.name]||0;
+      return `<td><input type="number" class="res-cat-pct"
+        data-mid="${m.id}" data-cat="${esc(c.name)}"
+        value="${pct}" min="0" max="100" oninput="updateDynAllocTotals()"
+        style="width:58px;padding:.2rem .3rem;border:1px solid #ccc;border-radius:5px;font-size:.81rem;text-align:center"></td>`;
+    }).join('');
+    const totalPct = cats.reduce((s,c)=>s+(allocs[c.name]||0),0);
+    const daily    = (totalPct/100*DAILY_HRS).toFixed(1);
+    const row = document.createElement('tr');
+    row.dataset.mid = m.id;
+    row.innerHTML = `
+      <td class="fw-semibold" style="font-size:.82rem">${esc(m.name)}</td>
+      ${catCells}
+      <td class="fw-semibold res-total-pct" id="resTotal_${m.id}"
+        style="font-size:.81rem;color:${totalPct>100?'var(--danger)':'inherit'}">${totalPct}%</td>
+      <td class="fw-semibold res-daily" id="resDaily_${m.id}" style="font-size:.81rem">${daily}h</td>
+      <td><button class="btn btn-sm p-0 ms-1" onclick="removeSchedMember('${m.id}')" title="Remove from project">
+        <i class="bi bi-person-dash text-danger" style="font-size:.85rem"></i></button></td>`;
+    tbody.appendChild(row);
+  });
+  updateDynAllocTotals();
+}
+
+function updateDynAllocTotals(){
+  const cats    = schedCategoryRows;
+  const members = schedAssignedMembers;
+
+  // Sync allocations state from inputs, update per-row totals
+  members.forEach(m => {
+    const allocs = {};
+    let rowTotal = 0;
+    cats.forEach(c => {
+      const inp = document.querySelector(`#resourceAllocBody .res-cat-pct[data-mid="${m.id}"][data-cat="${c.name}"]`);
+      const v = parseFloat(inp?.value||0);
+      allocs[c.name] = v;
+      rowTotal += v;
+    });
+    m.allocations = allocs;  // keep state in sync
+    const tEl = document.getElementById('resTotal_'+m.id);
+    const dEl = document.getElementById('resDaily_'+m.id);
+    if (tEl){ tEl.textContent = rowTotal+'%'; tEl.style.color = rowTotal>100?'var(--danger)':''; }
+    if (dEl)  dEl.textContent = (rowTotal/100*DAILY_HRS).toFixed(1)+'h';
+  });
+
+  // Column totals row
+  const totRow = document.getElementById('allocTotalsRow');
+  if (!totRow || !cats.length || !members.length){ if(totRow) totRow.innerHTML=''; return; }
+  const colTotals = cats.map(c => {
+    const s = members.reduce((acc,m)=>(acc+(m.allocations?.[c.name]||0)),0);
+    return `<span class="me-2"><span class="fw-semibold text-primary">${(s/100*DAILY_HRS).toFixed(1)}h</span>/day ${esc(c.name)}</span>`;
+  });
+  totRow.innerHTML = 'Daily project capacity: ' + colTotals.join('&nbsp;·&nbsp;');
+}
+
+function getResourceAllocDataDyn(){
+  updateDynAllocTotals();  // ensure allocations are in sync from inputs
+  return schedAssignedMembers.map(m => ({
+    id:         m.id,
+    name:       m.name,
+    allocations:m.allocations,
+    totalPct:   Object.values(m.allocations||{}).reduce((s,v)=>s+v,0),
+    dailyHrs:   Object.values(m.allocations||{}).reduce((s,v)=>s+v,0)/100*DAILY_HRS,
+    simPct:     m.allocations?.['Simulation']||0,
+    modPct:     m.allocations?.['Modelling'] ||0
+  }));
+}
+
+/* Helper: daily capacity for a named category across all resources */
+function catDailyCapacity(resources, catName){
+  return resources.reduce((s,r) => {
+    const allocs = r.allocations || {};
+    if (Object.keys(allocs).length) return s + (allocs[catName]||0)/100*DAILY_HRS;
+    // legacy
+    const cl = catName.toLowerCase();
+    if (cl.includes('simulat')) return s + (r.simPct||0)/100*DAILY_HRS;
+    if (cl.includes('model'))   return s + (r.modPct||0)/100*DAILY_HRS;
+    return s;
+  }, 0);
+}
+
+function getSchedStatus(entry, actualHrs){
+  const totalHrs = entry.categories?.length
+    ? entry.categories.reduce((s,c)=>s+c.plannedHours,0)
+    : (entry.simulationHours||0) + (entry.modellingHours||0);
+  const actualPct = totalHrs > 0 ? (actualHrs / totalHrs) * 100 : 0;
+
+  // Exhausted: logged hours have exceeded planned budget (regardless of deadline)
+  if (totalHrs > 0 && actualHrs > totalHrs){
+    if (!entry.endDate){
+      return { key:'exhausted', label:'Exhausted', actualPct, totalHrs, actualHrs };
+    }
+    const todayStrEx = new Date().toLocaleDateString('en-CA');
+    const daysLeftEx = Math.ceil((new Date(entry.endDate) - new Date(todayStrEx)) / 86400000);
+    return { key:'exhausted', label:'Exhausted', actualPct, totalHrs, actualHrs,
+             plannedPct: todayStrEx >= entry.endDate ? 100 : Math.min(100,(new Date(todayStrEx)-new Date(entry.startDate||todayStrEx))/(new Date(entry.endDate)-new Date(entry.startDate||todayStrEx))*100||0),
+             daysLeft: daysLeftEx };
+  }
+
+  if (!entry.endDate){
+    return { key:'nodeadline', label:'No Deadline', actualPct, totalHrs, actualHrs };
+  }
+
+  // Use LOCAL date strings (en-CA = YYYY-MM-DD) to avoid UTC midnight timezone shift.
+  // e.g. IST is UTC+5:30 so new Date('2026-07-06') midnight UTC = 05:30 IST,
+  // making "today" appear to be still July 5 when the user is already on July 6.
+  const todayStr = new Date().toLocaleDateString('en-CA'); // "YYYY-MM-DD" in local tz
+  const startStr = entry.startDate || todayStr;
+  const endStr   = entry.endDate;
+
+  // Calendar days between start and end (min 1 so same-day projects don't divide by 0)
+  const totalMs   = new Date(endStr) - new Date(startStr);
+  const totalDays = Math.max(1, totalMs / 86400000);
+
+  // Planned % = how far through the timeline are we today
+  let plannedPct;
+  if (todayStr >= endStr) {
+    plannedPct = 100;          // at or past end date → full time budget is spent
+  } else if (todayStr <= startStr) {
+    plannedPct = 0;            // project hasn't started yet
+  } else {
+    const elapsedMs = new Date(todayStr) - new Date(startStr);
+    plannedPct = Math.min(100, (elapsedMs / totalMs) * 100);
+  }
+
+  let key, label;
+  if (todayStr > endStr && actualPct < 100) { key='behind'; label='Behind Schedule'; }
+  else if (actualPct >= plannedPct + 5)     { key='ahead';  label='Ahead of Schedule'; }
+  else if (actualPct < plannedPct - 10)     { key='behind'; label='Behind Schedule'; }
+  else                                       { key='ontrack';label='On Track'; }
+
+  const daysLeft = Math.ceil((new Date(endStr) - new Date(todayStr)) / 86400000);
+  return { key, label, actualPct, plannedPct, totalHrs, actualHrs, daysLeft };
+}
+
+/* Suggest an end date based on remaining hours and per-member allocation */
+async function calcSuggestedEnd(){
+  const totalPlanned = schedCategoryRows.reduce((s,c)=>s+c.plannedHours, 0);
+  if (!totalPlanned){ showToast('Add planned hours in categories first', 'warning'); return; }
+
+  const resources = getResourceAllocDataDyn();
+  // Daily capacity per category
+  const catCapacity = {};
+  schedCategoryRows.forEach(c => {
+    catCapacity[c.name] = resources.reduce((s,r) => s + (r.allocations?.[c.name]||0)/100*DAILY_HRS, 0);
+  });
+  const totalDailyCap = Object.values(catCapacity).reduce((s,v)=>s+v, 0);
+  if (totalDailyCap <= 0){ showToast('Set resource allocation % first', 'warning'); return; }
+
+  // Actual hours logged per category for this project (if editing)
+  const editId2 = document.getElementById('editSchedId').value;
+  const existingEntry2 = scheduleEntries.find(e => e.id === editId2);
+  const catActual = {};
+  if (existingEntry2 && CONFIGURED && db){
+    const snap = await db.collection('sessions').where('projectId','==',existingEntry2.projectId).get().catch(()=>({docs:[]}));
+    snap.docs.forEach(d => {
+      const cat = d.data().category || 'Simulation';
+      catActual[cat] = (catActual[cat]||0) + (d.data().duration||0)/3600;
+    });
+  }
+
+  // Days needed = max across all categories
+  let daysNeeded = 0;
+  const catDaysInfo = [];
+  schedCategoryRows.forEach(c => {
+    const actual = catActual[c.name]||0;
+    const rem    = Math.max(0, c.plannedHours - actual);
+    const cap    = catCapacity[c.name];
+    const days   = cap > 0 ? rem / cap : (rem > 0 ? Infinity : 0);
+    if (!isFinite(days) && rem > 0){ catDaysInfo.push(`${c.name}: no capacity`); }
+    else { catDaysInfo.push(`${c.name}: ${rem.toFixed(1)}h ÷ ${cap.toFixed(1)}h/day = ${Math.ceil(days)}d`); }
+    daysNeeded = Math.max(daysNeeded, isFinite(days) ? days : 0);
+  });
+  if (!isFinite(daysNeeded)){ showToast('Some categories have hours but no capacity assigned', 'warning'); return; }
+
+  const startVal2 = document.getElementById('schedStart').value;
+  const start2 = startVal2 ? new Date(startVal2) : new Date();
+  const suggested2 = new Date(Math.max(start2.getTime(), Date.now()));
+  suggested2.setDate(suggested2.getDate() + Math.ceil(daysNeeded));
+  const suggestedStr2 = suggested2.toISOString().slice(0,10);
+
+  document.getElementById('schedEnd').value = suggestedStr2;
+  const box = document.getElementById('schedSuggestion');
+  box.classList.remove('d-none');
+  box.innerHTML = `<i class="bi bi-lightbulb me-1"></i>
+    Suggested: <strong>${new Date(suggestedStr2).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}</strong>
+    (≈${Math.ceil(daysNeeded)} working days)
+    <div class="mt-1" style="font-size:.77rem;color:#555">${catDaysInfo.join(' &nbsp;·&nbsp; ')}</div>`;
+}
+
+/* Suggest start date based on when assigned resources become free */
+function calcSuggestedStart(){
+  if (!schedAssignedMembers.length){
+    showToast('Assign at least one resource first, then suggest start date', 'warning'); return;
+  }
+  const editId = document.getElementById('editSchedId').value;
+  let latestDate = null;
+  let busyMember = null;
+
+  schedAssignedMembers.forEach(m => {
+    const end = getMemberLatestEndDate(m.id, editId);
+    if (end && (!latestDate || end > latestDate)){ latestDate = end; busyMember = m.name; }
+  });
+
+  if (!latestDate){
+    showToast('All assigned resources are available — no start date conflict found', 'success');
+    return;
+  }
+
+  // Suggest day after the latest busy date
+  const d = new Date(latestDate);
+  d.setDate(d.getDate() + 1);
+  const str = d.toISOString().slice(0,10);
+  document.getElementById('schedStart').value = str;
+
+  const box = document.getElementById('schedSuggestion');
+  box.classList.remove('d-none');
+  box.innerHTML = `<i class="bi bi-person-check me-1"></i>
+    Suggested start: <strong>${d.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}</strong>
+    — the day after <strong>${esc(busyMember)}</strong>'s current 100%-allocation ends.
+    <div class="mt-1" style="font-size:.77rem;color:#555">
+      Review each assigned member's projects and adjust allocations if needed before finalising dates.
+    </div>`;
+}
+
+/* ── ON HOLD / CANCELLED STATUS CHANGE ────────────────────────────── */
+function onSchedStatusChange(){
+  const val = document.getElementById('schedStatus').value;
+  const wrap = document.getElementById('statusNoteWrap');
+  const note = document.getElementById('statusChangeNote');
+  if (!wrap) return;
+  if (val === 'On Hold' || val === 'Cancelled' || val === 'Completed'){
+    wrap.style.display = '';
+    note.placeholder = val === 'On Hold'
+      ? 'Reason for hold (e.g. awaiting client data, budget freeze)…'
+      : val === 'Completed'
+        ? 'Completion notes (e.g. delivered on 5 Jul, client accepted)…'
+        : 'Reason for cancellation…';
+  } else {
+    wrap.style.display = 'none';
+  }
+}
+
+/* State for freed-hours dialog */
+let _freedEntryId  = null;
+let _freedData     = [];
+let _prevSchedStatus = 'Active';  // tracks what status was when modal opened
+
+/* Show the freed-hours reallocation dialog */
+function showFreedHoursDialog(entry){
+  const freed = (entry.resources||[]).map(r => {
+    const pct = Object.values(r.allocations||{}).reduce((s,v)=>s+v,0)
+             || (r.simPct||0)+(r.modPct||0);
+    const daily = pct/100*DAILY_HRS;
+    return { name: r.name, pct, daily };
+  }).filter(r => r.pct > 0);
+
+  if (!freed.length) return;
+
+  document.getElementById('freedHoursBody').innerHTML = freed.map(r=>`<tr>
+    <td>${esc(r.name)}</td>
+    <td class="text-center">${r.pct}%</td>
+    <td class="text-center" style="color:var(--success);font-weight:600">${r.daily.toFixed(1)}h/day</td>
+  </tr>`).join('');
+
+  // Populate target project list (active entries excluding this one)
+  const sel = document.getElementById('freedTargetProject');
+  sel.innerHTML = '<option value="">— Choose project —</option>';
+  scheduleEntries
+    .filter(e => e.id !== entry.id && (!e.schedStatus || e.schedStatus === 'Active'))
+    .forEach(e => {
+      const proj = S.projects.find(p=>p.id===e.projectId);
+      sel.innerHTML += `<option value="${e.id}">${esc(proj?.num||'')} – ${esc(proj?.name||'?')}</option>`;
+    });
+
+  _freedEntryId = entry.id;
+  _freedData = freed;
+  (new bootstrap.Modal(document.getElementById('freedHoursModal'))).show();
+}
+
+function assignFreedHoursToProject(){
+  const targetId = document.getElementById('freedTargetProject').value;
+  if (!targetId){ showToast('Select a project', 'warning'); return; }
+  const m = bootstrap.Modal.getInstance(document.getElementById('freedHoursModal'));
+  if (m) m.hide();
+  openEditSchedule(targetId);
+  showToast('💡 Assign the freed resources here and adjust their % for this project', 'info');
+}
+
+/* Render the schedule planner page */
+async function renderSchedule(){
+  const list  = document.getElementById('scheduleList');
+  const noMsg = document.getElementById('noSchedMsg');
+  if (!scheduleEntries.length){
+    list.innerHTML=''; noMsg.classList.remove('d-none');
+    ['sActiveCount','sOnTrackCount','sBehindCount'].forEach(id=>document.getElementById(id).textContent='0');
+    document.getElementById('sTeamUtil').textContent='0%';
+    return;
+  }
+  noMsg.classList.add('d-none');
+
+  // ── Session data bucketed per project, per member, per period ─────
+  // actualHrsMap[pid]                → total hrs (all members, all time)
+  // memberActualMap[pid][email]      → {sim, mod, todaySim, todayMod,
+  //                                     weeklySim, weeklyMod, monthlySim, monthlyMod}
+  const actualHrsMap    = {};
+  const memberActualMap = {};
+
+  const _now = new Date();
+  const todayDateStr  = _now.toISOString().slice(0,10);
+  // Week start = Monday
+  const _dow = _now.getDay();
+  const _wkStart = new Date(_now);
+  _wkStart.setDate(_now.getDate() + (_dow===0 ? -6 : 1-_dow));
+  _wkStart.setHours(0,0,0,0);
+  const weekStartStr  = _wkStart.toISOString().slice(0,10);
+  // Month start
+  const monthStartStr = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-01`;
+
+  if (CONFIGURED && db){
+    const snap = await db.collection('sessions').get().catch(()=>({docs:[]}));
+    snap.docs.forEach(d=>{
+      const s       = d.data();
+      const pid     = s.projectId;
+      const hrs     = (s.duration||0)/3600;
+      const email   = (s.userEmail||'').toLowerCase();
+      const cat     = (s.category||'').toLowerCase().includes('model') ? 'mod' : 'sim';
+      const dateStr = (s.date || (s.endDate||'').slice(0,10) || '');
+
+      actualHrsMap[pid] = (actualHrsMap[pid]||0) + hrs;
+
+      if (!memberActualMap[pid]) memberActualMap[pid] = {};
+      if (!memberActualMap[pid][email]) memberActualMap[pid][email] =
+        {sim:0, mod:0, todaySim:0, todayMod:0, weeklySim:0, weeklyMod:0, monthlySim:0, monthlyMod:0};
+
+      const m   = memberActualMap[pid][email];
+      const ct  = catType(s.category);  // 'sim', 'mod', or null
+
+      // ALL hours count toward project total progress
+      m.total = (m.total||0) + hrs;
+      if (dateStr === todayDateStr)  m.todayTotal  = (m.todayTotal||0)  + hrs;
+      if (dateStr >= weekStartStr)   m.weeklyTotal = (m.weeklyTotal||0) + hrs;
+      if (dateStr >= monthStartStr)  m.monthlyTotal= (m.monthlyTotal||0)+ hrs;
+
+      // Only sim/mod categories feed the sim/mod breakdown columns
+      if (ct) {
+        m[ct] += hrs;
+        if (dateStr === todayDateStr)  m['today' +cap(ct)] += hrs;
+        if (dateStr >= weekStartStr)   m['weekly'+cap(ct)] += hrs;
+        if (dateStr >= monthStartStr)  m['monthly'+cap(ct)]+= hrs;
+      }
+    });
+    // Share all-time hours with dashboard so it can compute Exhausted count
+    allProjectHrsMap = actualHrsMap;
+  }
+
+  function cap(s){ return s.charAt(0).toUpperCase()+s.slice(1); }
+
+  // Returns 'sim', 'mod', or null (not counted in sim/mod breakdown)
+  function catType(cat){
+    const c = (cat||'').toLowerCase();
+    if (c.includes('simulat')) return 'sim';
+    if (c.includes('model'))   return 'mod';
+    return null;
+  }
+
+  const urgencyOrder = {High:0, Medium:1, Low:2};
+  // Status sort: Active first, then On Hold, then Cancelled
+  const statusOrder  = {'Active':0,'On Hold':1,'Completed':2,'Cancelled':3};
+  const sorted = [...scheduleEntries].sort((a,b) => {
+    const sd = (statusOrder[a.schedStatus||'Active']||0) - (statusOrder[b.schedStatus||'Active']||0);
+    if (sd !== 0) return sd;
+    return (urgencyOrder[a.urgency]||1) - (urgencyOrder[b.urgency]||1);
+  });
+
+  let onTrack=0, behind=0, ahead=0;
+  // Team utilisation: total committed daily hrs across all active entries / max possible daily hrs
+  // Uses ALL categories (not just Simulation + Modelling)
+  let totalCommittedDailyHrs = 0;
+  const maxDailyHrs = teamMembers.length * DAILY_HRS;  // e.g. 4 members × 8h = 32h/day
+  list.innerHTML='';
+
+  sorted.forEach(entry=>{
+    const proj       = S.projects.find(p=>p.id===entry.projectId);
+    const actualHrs  = actualHrsMap[entry.projectId]||0;
+    const schedSt    = entry.schedStatus || 'Active';
+    const isInactive = schedSt === 'On Hold' || schedSt === 'Cancelled' || schedSt === 'Completed';
+    const status     = getSchedStatus(entry, actualHrs);
+    const totalHrs   = status.totalHrs;
+    const cats       = entry.categories?.length ? entry.categories
+      : [{name:'Simulation',plannedHours:entry.simulationHours||0},{name:'Modelling',plannedHours:entry.modellingHours||0}].filter(c=>c.plannedHours>0);
+    const resources  = entry.resources||[];
+    const simPct     = entry.simulationPct||0;
+    const modPct     = entry.modellingPct||0;
+    const urgColor   = {High:'var(--danger)',Medium:'var(--warning)',Low:'var(--success)'}[entry.urgency]||'#888';
+
+    // Only count active entries in summary cards
+    if (!isInactive){
+      if (status.key==='behind')  behind++;
+      else if (status.key==='ahead')   ahead++;
+      else if (status.key==='ontrack') onTrack++;
+      // Accumulate committed daily hours across ALL categories for ALL assigned resources
+      resources.forEach(r => {
+        const pct = Object.values(r.allocations||{}).reduce((s,v)=>s+v, 0)
+                 || (r.simPct||0) + (r.modPct||0);
+        totalCommittedDailyHrs += pct / 100 * DAILY_HRS;
+      });
+    }
+
+    const progressBar = totalHrs > 0
+      ? `<div class="progress mb-1" style="height:8px">
+           <div class="progress-bar" style="width:${Math.min(100,status.actualPct).toFixed(1)}%;background:${status.key==='behind'?'var(--danger)':status.key==='ahead'?'var(--success)':'var(--warning)'}"></div>
+         </div>
+         <div class="d-flex justify-content-between" style="font-size:.75rem;color:#777">
+           <span>${actualHrs.toFixed(1)}h logged</span>
+           <span>${totalHrs}h planned</span>
+         </div>`
+      : '<div class="text-muted" style="font-size:.8rem">No hours planned</div>';
+
+    const daysLeftBadge = entry.endDate
+      ? (() => {
+          const dl = Math.ceil((new Date(entry.endDate) - new Date()) / 86400000);
+          const col = dl < 0 ? 'danger' : dl <= 7 ? 'warning' : 'secondary';
+          return `<span class="badge bg-${col} ms-2">${dl < 0 ? Math.abs(dl)+' days overdue' : dl+' days left'}</span>`;
+        })()
+      : '';
+
+    const adminBtns = isAdmin() ? `
+      <div class="d-flex gap-2 mt-2 flex-wrap">
+        <button class="btn btn-outline-primary btn-sm" onclick="openEditSchedule('${entry.id}')" title="Edit schedule">
+          <i class="bi bi-pencil"></i> Schedule</button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="editProject('${entry.projectId}')" title="Edit project details (value, description, name)">
+          <i class="bi bi-folder2-open"></i> Project Info</button>
+        <button class="btn btn-outline-danger btn-sm" onclick="deleteSchedule('${entry.id}')">
+          <i class="bi bi-trash"></i></button>
+      </div>` : '';
+
+    // Schedule status badge
+    const schedStBadgeClass = {
+      'On Hold':'onhold', 'Cancelled':'cancelled', 'Completed':'completed-ok'
+    }[schedSt] || '';
+    const schedStBadge = schedSt !== 'Active'
+      ? `<span class="sched-badge ${schedStBadgeClass}">${schedSt}</span>`
+      : '';
+
+    // Exhausted badge: logged hours exceeded planned budget
+    const exhaustedBadge = status.key === 'exhausted'
+      ? `<span class="sched-badge exhausted">⚠ Exhausted — ${actualHrs.toFixed(1)}h logged vs ${status.totalHrs}h planned</span>`
+      : '';
+
+    const notesHtml = (entry.schedNotes || entry.statusNote)
+      ? `<div style="font-size:.77rem;color:#888;font-style:italic;margin-top:.3rem">
+           <i class="bi bi-journal-text me-1"></i>${esc(entry.statusNote||entry.schedNotes||'')}
+         </div>`
+      : '';
+
+    // Card border class: exhausted overrides everything; inactive uses their own class; else use timeline status
+    const cardClass = status.key === 'exhausted' ? 'exhausted'
+      : isInactive ? (schedSt==='On Hold'?'onhold':schedSt==='Completed'?'completed-ok':'cancelled')
+      : status.key;
+
+    const card = document.createElement('div');
+    card.className = `sched-card ${cardClass}`;
+    card.innerHTML = `
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+        <div style="flex:1;min-width:200px">
+          <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+            <span class="fw-bold text-primary">${esc(proj?.num||'')}</span>
+            <span class="fw-semibold">${esc(proj?.name||'Unknown Project')}</span>
+            ${schedStBadge}
+            ${status.key === 'exhausted' ? exhaustedBadge : (!isInactive ? `<span class="sched-badge ${status.key}">${status.label}</span>` : '')}
+            <span class="badge ms-1" style="background:${urgColor}22;color:${urgColor};border:1px solid ${urgColor}55;font-size:.72rem">${entry.urgency||'Medium'} Priority</span>
+            ${daysLeftBadge}
+          </div>
+          ${notesHtml}
+          <div style="font-size:.8rem;color:#666" class="mb-2">
+            ${cats.map(c=>`<span class="me-3">${esc(c.name)}: <strong>${c.plannedHours}h</strong> <span class="text-muted">(${catDailyCapacity(resources,c.name).toFixed(1)}h/day)</span></span>`).join('')}
+          </div>
+          ${progressBar}
+          ${resources.filter(r=>r.totalPct>0||(r.simPct||0)+(r.modPct||0)>0).length ? `
+          <details class="mt-2">
+            <summary style="cursor:pointer;color:var(--pl);font-weight:500;user-select:none;font-size:.82rem">
+              <i class="bi bi-people me-1"></i>Resource tracker — Daily / Weekly / Monthly
+            </summary>
+            <div class="d-flex flex-wrap gap-2 mt-2">
+              ${resources.filter(r=>r.totalPct>0||(r.simPct||0)+(r.modPct||0)>0).map(r=>{
+                const _tm = teamMembers.find(tm=>tm.id===r.id)||{};
+                // Fallback: if email field is blank but name looks like an email, use name
+                const mEmail = (_tm.email || (_tm.name?.includes('@') ? _tm.name : '') || '').toLowerCase();
+                const m = mEmail ? ((memberActualMap[entry.projectId]||{})[mEmail]||{}) : null;
+                const empty = {total:0,todayTotal:0,weeklyTotal:0,monthlyTotal:0};
+                const md = m || empty;
+                const totalAllocPct = Object.keys(r.allocations||{}).length
+                  ? Object.values(r.allocations).reduce((s,v)=>s+v,0)
+                  : (r.simPct||0)+(r.modPct||0);
+                const planDay   = totalAllocPct/100*DAILY_HRS;
+                const planWeek  = planDay * 6;
+                const planMonth = planDay * 26;
+
+                const periods = [
+                  {label:'Today',      logged: md.todayTotal||0,   plan: planDay},
+                  {label:'This Week',  logged: md.weeklyTotal||0,  plan: planWeek},
+                  {label:'This Month', logged: md.monthlyTotal||0, plan: planMonth},
+                ];
+
+                const si = (logged, plan) => {
+                  if (!mEmail) return '<span style="color:#aaa">—</span>';
+                  if (logged === 0 && plan > 0) return '<span style="color:#aaa">⬜ None</span>';
+                  const p = plan > 0 ? logged/plan : 1;
+                  return p >= 1 ? '<span style="color:#2e7d32">✅ On target</span>'
+                    : p >= 0.5  ? '<span style="color:#e65100">🟡 Behind</span>'
+                                : '<span style="color:#c62828">🔴 Well behind</span>';
+                };
+
+                // Build allocation summary string
+                const allocSummary = Object.keys(r.allocations||{}).length
+                  ? Object.entries(r.allocations).filter(([,v])=>v>0).map(([k,v])=>`${v}% ${k}`).join(' · ')
+                  : `${(r.simPct||0)}% Sim · ${(r.modPct||0)}% Mod`;
+
+                const pRows = periods.map(p=>`
+                  <tr>
+                    <td style="padding:.18rem .45rem;font-size:.74rem;color:#555;white-space:nowrap">${p.label}</td>
+                    <td style="padding:.18rem .45rem;font-size:.74rem;color:#3949ab;white-space:nowrap">${p.plan.toFixed(1)}h</td>
+                    <td style="padding:.18rem .45rem;font-size:.74rem;white-space:nowrap">${mEmail ? p.logged.toFixed(1)+'h' : '<span style="color:#aaa;font-style:italic">—</span>'}</td>
+                    <td style="padding:.18rem .45rem;font-size:.73rem">${si(p.logged, p.plan)}</td>
+                  </tr>`).join('');
+
+                return `<div style="border:1px solid #e0e3ef;border-radius:9px;padding:.55rem .75rem;min-width:210px;flex:1;background:#fafbff">
+                  <div class="fw-semibold" style="font-size:.82rem">${esc(r.name)}</div>
+                  <div style="font-size:.71rem;color:#888;margin-bottom:.3rem">
+                    ${planDay.toFixed(1)}h/day &nbsp;·&nbsp; ${allocSummary}
+                  </div>
+                  <table style="width:100%;border-collapse:collapse">
+                    <tr style="background:#eef0f8">
+                      <th style="font-size:.7rem;padding:.15rem .45rem">Period</th>
+                      <th style="font-size:.7rem;padding:.15rem .45rem;color:#3949ab">Target</th>
+                      <th style="font-size:.7rem;padding:.15rem .45rem">Logged</th>
+                      <th style="font-size:.7rem;padding:.15rem .45rem">Status</th>
+                    </tr>
+                    ${pRows}
+                  </table>
+                  ${!mEmail ? `<div style="font-size:.7rem;color:#aaa;font-style:italic;margin-top:.25rem">Set email in Settings to track</div>` : ''}
+                </div>`;
+              }).join('')}
+            </div>
+          </details>` : ''}
+          ${adminBtns}
+        </div>
+        <div class="text-end" style="min-width:130px">
+          <div style="font-size:.8rem;color:#777"><i class="bi bi-calendar-event me-1"></i>
+            ${entry.startDate ? new Date(entry.startDate).toLocaleDateString('en-IN',{day:'numeric',month:'short'}) : '—'}
+            ${entry.endDate   ? ' → '+new Date(entry.endDate).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : ''}
+          </div>
+          ${status.plannedPct !== undefined ? `
+            <div class="mt-1" style="font-size:.78rem;color:#999">
+              Planned: ${status.plannedPct.toFixed(0)}% · Actual: ${status.actualPct.toFixed(0)}%
+            </div>` : ''}
+        </div>
+      </div>`;
+    list.appendChild(card);
+  });
+
+  const activeCount = scheduleEntries.filter(e => !e.schedStatus || e.schedStatus === 'Active').length;
+  // Utilisation = committed daily hrs / max available daily hrs (can exceed 100% if over-allocated)
+  const utilPct = maxDailyHrs > 0 ? Math.round(totalCommittedDailyHrs / maxDailyHrs * 100) : 0;
+  const utilEl  = document.getElementById('sTeamUtil');
+  utilEl.textContent = utilPct + '%';
+  utilEl.style.color = utilPct > 100 ? 'var(--danger)' : '';
+  utilEl.title = `${totalCommittedDailyHrs.toFixed(1)}h committed / ${maxDailyHrs}h available per day`;
+
+  document.getElementById('sActiveCount').textContent  = activeCount;
+  document.getElementById('sOnTrackCount').textContent = onTrack;
+  document.getElementById('sBehindCount').textContent  = behind;
+
+  renderResourceDailySchedule();
+}
+
+/* Check behind schedule on login and show popup */
+async function checkBehindSchedule(){
+  if (!scheduleEntries.length) return;
+  const actualHrsMap    = {};
+  const memberActualMap = {};
+
+  const _now2 = new Date();
+  const todayDateStr2  = _now2.toISOString().slice(0,10);
+  const _dow2 = _now2.getDay();
+  const _wk2  = new Date(_now2);
+  _wk2.setDate(_now2.getDate() + (_dow2===0 ? -6 : 1-_dow2));
+  _wk2.setHours(0,0,0,0);
+  const weekStartStr2   = _wk2.toISOString().slice(0,10);
+  const monthStartStr2  = `${_now2.getFullYear()}-${String(_now2.getMonth()+1).padStart(2,'0')}-01`;
+
+  if (CONFIGURED && db){
+    const snap = await db.collection('sessions').get().catch(()=>({docs:[]}));
+    snap.docs.forEach(d=>{
+      const s     = d.data();
+      const pid   = s.projectId;
+      const hrs   = (s.duration||0)/3600;
+      const email = (s.userEmail||'').toLowerCase();
+      const cat   = (s.category||'').toLowerCase().includes('model') ? 'mod' : 'sim';
+      const dateStr = (s.date||(s.endDate||'').slice(0,10)||'');
+
+      actualHrsMap[pid] = (actualHrsMap[pid]||0) + hrs;
+      if (!memberActualMap[pid]) memberActualMap[pid] = {};
+      if (!memberActualMap[pid][email]) memberActualMap[pid][email] =
+        {sim:0,mod:0,todaySim:0,todayMod:0,weeklySim:0,weeklyMod:0,monthlySim:0,monthlyMod:0};
+      const mm  = memberActualMap[pid][email];
+      const ct2 = ((s.category||'').toLowerCase().includes('simulat') ? 'sim'
+                 : (s.category||'').toLowerCase().includes('model')   ? 'mod' : null);
+
+      mm.total = (mm.total||0) + hrs;
+      if (dateStr === todayDateStr2)  mm.todayTotal  = (mm.todayTotal||0)  + hrs;
+      if (dateStr >= weekStartStr2)   mm.weeklyTotal = (mm.weeklyTotal||0) + hrs;
+      if (dateStr >= monthStartStr2)  mm.monthlyTotal= (mm.monthlyTotal||0)+ hrs;
+
+      if (ct2) {
+        mm[ct2] += hrs;
+        const C2 = ct2.charAt(0).toUpperCase()+ct2.slice(1);
+        if (dateStr === todayDateStr2)  mm['today' +C2] += hrs;
+        if (dateStr >= weekStartStr2)   mm['weekly'+C2] += hrs;
+        if (dateStr >= monthStartStr2)  mm['monthly'+C2]+= hrs;
+      }
+    });
+  }
+
+  const behindList = scheduleEntries.filter(entry=>{
+    const hrs = actualHrsMap[entry.projectId]||0;
+    return getSchedStatus(entry, hrs).key === 'behind';
+  });
+  if (!behindList.length) return;
+
+  const body = document.getElementById('behindSchedBody');
+  body.innerHTML = '<p class="text-danger fw-semibold mb-2">The following projects are behind schedule — please take action:</p>';
+  behindList.forEach(entry=>{
+    const proj    = S.projects.find(p=>p.id===entry.projectId);
+    const hrs     = actualHrsMap[entry.projectId]||0;
+    const st      = getSchedStatus(entry, hrs);
+    const resources = entry.resources||[];
+
+    // Check each member across today / week / month
+    const memberRows = resources.filter(r=>r.simPct>0||r.modPct>0).map(r=>{
+      const _tm2   = teamMembers.find(tm=>tm.id===r.id)||{};
+      const mEmail = (_tm2.email || (_tm2.name?.includes('@') ? _tm2.name : '') || '').toLowerCase();
+      if (!mEmail) return null;
+      const md      = (memberActualMap[entry.projectId]||{})[mEmail] ||
+        {todaySim:0,todayMod:0,weeklySim:0,weeklyMod:0,monthlySim:0,monthlyMod:0};
+      const planDay   = (r.simPct+r.modPct)/100*DAILY_HRS;
+      const planWeek  = planDay * 6;
+      const planMonth = planDay * 26;
+      const todayL    = md.todaySim   + md.todayMod;
+      const weekL     = md.weeklySim  + md.weeklyMod;
+      const monthL    = md.monthlySim + md.monthlyMod;
+
+      const badge = (logged, plan) => {
+        if (plan <= 0) return '';
+        const p = logged/plan;
+        return p >= 1   ? `<span style="color:#2e7d32">✅</span>`
+          : p >= 0.5    ? `<span style="color:#e65100">🟡</span>`
+                        : `<span style="color:#c62828">🔴</span>`;
+      };
+
+      return `<tr>
+        <td style="padding:.15rem .4rem;font-size:.76rem;font-weight:600">${esc(r.name)}</td>
+        <td style="padding:.15rem .4rem;font-size:.74rem">${badge(todayL,planDay)} ${todayL.toFixed(1)}/${planDay.toFixed(1)}h</td>
+        <td style="padding:.15rem .4rem;font-size:.74rem">${badge(weekL,planWeek)} ${weekL.toFixed(1)}/${planWeek.toFixed(1)}h</td>
+        <td style="padding:.15rem .4rem;font-size:.74rem">${badge(monthL,planMonth)} ${monthL.toFixed(1)}/${planMonth.toFixed(0)}h</td>
+      </tr>`;
+    }).filter(Boolean);
+
+    const li = document.createElement('div');
+    li.className = 'mb-2 p-2 rounded border border-danger bg-light';
+    li.innerHTML = `
+      <div class="fw-semibold">${esc(proj?.num||'')} ${esc(proj?.name||'Unknown')}</div>
+      <div style="font-size:.8rem;color:#666" class="mb-1">
+        Overall: ${st.plannedPct?.toFixed(0)||'?'}% time elapsed · ${st.actualPct.toFixed(0)}% hours done
+        ${entry.endDate ? ' · Due: '+new Date(entry.endDate).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : ''}
+      </div>
+      ${memberRows.length ? `
+      <table style="width:100%;border-collapse:collapse">
+        <tr style="background:#f8d7da">
+          <th style="padding:.12rem .4rem;font-size:.7rem">Member</th>
+          <th style="padding:.12rem .4rem;font-size:.7rem">Today</th>
+          <th style="padding:.12rem .4rem;font-size:.7rem">This Week</th>
+          <th style="padding:.12rem .4rem;font-size:.7rem">This Month</th>
+        </tr>
+        ${memberRows.join('')}
+      </table>` : '<div style="font-size:.75rem;color:#aaa">Set member emails in Settings to see per-person breakdown.</div>'}`;
+    body.appendChild(li);
+  });
+
+  const modal = new bootstrap.Modal(document.getElementById('behindSchedModal'));
+  modal.show();
+}
+
+function populateSchedProjectDropdown(selectedId){
+  const sel = document.getElementById('schedProject');
+  sel.innerHTML = '<option value="">— Select Project —</option>';
+  S.projects.forEach(p=>{
+    sel.innerHTML += `<option value="${p.id}"${p.id===selectedId?' selected':''}>${esc(p.num+' – '+p.name)}</option>`;
+  });
+  sel.innerHTML += `<option value="__new__" style="color:var(--pl);font-weight:600">➕ Create new project here…</option>`;
+  document.getElementById('newProjInline').style.display = 'none';
+  populateSchedCatPicker();
+}
+
+function onSchedProjectChange(){
+  const val = document.getElementById('schedProject').value;
+  document.getElementById('newProjInline').style.display = val === '__new__' ? '' : 'none';
+  if (val === '__new__'){
+    document.getElementById('qpStart').value = todayStr();
+    document.getElementById('qpEnd').value   = '';
+    populateSelect('schedProjType', S.settings.projectTypes || [], '');
+  } else if (val) {
+    // Auto-fill project fields from existing project
+    const proj = S.projects.find(p => p.id === val);
+    populateSelect('schedProjType', S.settings.projectTypes || [], proj?.type || '');
+    document.getElementById('schedProjValue').value = proj?.value || '';
+    document.getElementById('schedProjDesc').value  = proj?.desc  || '';
+  }
+}
+
+/* Open add schedule modal */
+function openAddSchedule(){
+  if (!isAdmin()){ showToast('Admin only', 'danger'); return; }
+  if (!schedModal) schedModal = new bootstrap.Modal(document.getElementById('scheduleModal'));
+  document.getElementById('schedModalTitle').textContent = 'Add Project Schedule';
+  document.getElementById('editSchedId').value = '';
+  populateSchedProjectDropdown('');
+  document.getElementById('schedStart').value   = todayStr();
+  document.getElementById('schedEnd').value     = '';
+  document.getElementById('schedUrgency').value = 'Medium';
+  document.getElementById('schedStatus').value  = 'Active';
+  document.getElementById('schedSuggestion').classList.add('d-none');
+  document.getElementById('statusNoteWrap').style.display = 'none';
+  document.getElementById('statusChangeNote').value = '';
+  document.getElementById('schedNotes').value        = '';
+  populateSelect('schedProjType', S.settings.projectTypes || [], '');
+  document.getElementById('schedProjValue').value = '';
+  document.getElementById('schedProjDesc').value  = '';
+  _prevSchedStatus = 'Active';
+  schedCategoryRows = [];
+  renderSchedCatList();
+  renderDynResourceTable([]);
+  schedModal.show();
+}
+
+/* Open edit schedule modal */
+function openEditSchedule(id){
+  if (!isAdmin()){ showToast('Admin only', 'danger'); return; }
+  const entry = scheduleEntries.find(e=>e.id===id);
+  if (!entry) return;
+  if (!schedModal) schedModal = new bootstrap.Modal(document.getElementById('scheduleModal'));
+  document.getElementById('schedModalTitle').textContent = 'Edit Project Schedule';
+  document.getElementById('editSchedId').value = id;
+  populateSchedProjectDropdown(entry.projectId);
+  document.getElementById('schedUrgency').value   = entry.urgency    || 'Medium';
+  const st = entry.schedStatus || 'Active';
+  document.getElementById('schedStatus').value    = st;
+  document.getElementById('schedStart').value     = entry.startDate  || '';
+  document.getElementById('schedEnd').value       = entry.endDate    || '';
+  document.getElementById('schedNotes').value     = entry.schedNotes || '';
+  document.getElementById('statusChangeNote').value = entry.statusNote || '';
+  document.getElementById('statusNoteWrap').style.display = (st==='On Hold'||st==='Cancelled') ? '' : 'none';
+  document.getElementById('schedSuggestion').classList.add('d-none');
+  _prevSchedStatus = st;  // remember status so we can detect change on save
+
+  // Load project fields from project record
+  const _projForEntry = S.projects.find(p => p.id === entry.projectId);
+  populateSelect('schedProjType', S.settings.projectTypes || [], _projForEntry?.type || '');
+  document.getElementById('schedProjValue').value = _projForEntry?.value || '';
+  document.getElementById('schedProjDesc').value  = _projForEntry?.desc  || '';
+
+  // Load categories (new format) or build from legacy sim/mod hours
+  if (entry.categories && entry.categories.length) {
+    schedCategoryRows = entry.categories.map(c => ({name: c.name, plannedHours: c.plannedHours}));
+  } else {
+    schedCategoryRows = [];
+    if (entry.simulationHours > 0) schedCategoryRows.push({name:'Simulation', plannedHours: entry.simulationHours});
+    if (entry.modellingHours  > 0) schedCategoryRows.push({name:'Modelling',  plannedHours: entry.modellingHours});
+  }
+  renderSchedCatList();
+  renderDynResourceTable(entry.resources || []);
+  schedModal.show();
+}
+
+/* Save (add or update) a schedule entry */
+async function saveSchedule(){
+  if (!isAdmin()){ showToast('Admin only', 'danger'); return; }
+  let pid = document.getElementById('schedProject').value;
+  if (!pid){ showToast('Please select a project', 'warning'); return; }
+  const startVal = document.getElementById('schedStart').value;
+  if (!startVal){ showToast('Start date is required', 'warning'); return; }
+
+  // ── Create new project if "➕ New project" was selected ──────────
+  if (pid === '__new__'){
+    const qNum  = document.getElementById('qpNum').value.trim();
+    const qName = document.getElementById('qpName').value.trim();
+    if (!qNum || !qName){ showToast('Enter project number and name', 'warning'); return; }
+    try {
+      const projData = {
+        num: qNum, name: qName,
+        value      : parseFloat(document.getElementById('qpValue').value) || parseFloat(document.getElementById('schedProjValue').value) || 0,
+        plannedHours: 0,
+        status     : document.getElementById('schedStatus').value || 'Active',
+        type       : document.getElementById('schedProjType').value || '',
+        startDate  : document.getElementById('qpStart').value || startVal,
+        endDate    : document.getElementById('qpEnd').value   || '',
+        desc       : document.getElementById('qpDesc').value.trim() || document.getElementById('schedProjDesc').value.trim() || '',
+        createdAt  : firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt  : firebase.firestore.FieldValue.serverTimestamp()
+      };
+      const ref = await db.collection('projects').add(projData);
+      pid = ref.id;
+      showToast(`Project "${qNum} – ${qName}" created ✓`, 'success');
+    } catch(e){
+      showToast('Could not create project: '+e.message, 'danger'); return;
+    }
+  }
+
+  if (!schedCategoryRows.length){ showToast('Add at least one work category', 'warning'); return; }
+
+  // ── Ensure Simulation & Modelling exist in work categories ───────
+  const existingCats = S.settings.workCategories || [];
+  const toAdd = ['Simulation','Modelling'].filter(c => !existingCats.includes(c));
+  if (toAdd.length && CONFIGURED && db){
+    const updated = [...existingCats, ...toAdd];
+    S.settings.workCategories = updated;
+    db.collection('settings').doc('main').update({ workCategories: updated })
+      .catch(e => console.warn('workCategories sync', e));
+    populateProjectDropdowns();  // refresh timer slot category dropdown immediately
+  }
+
+  const resources = getResourceAllocDataDyn();
+  // For backward compat and team util card, compute sim+mod aggregates
+  const totalSimPct = resources.reduce((s,r)=>s+(r.allocations?.['Simulation']||0),0);
+  const totalModPct = resources.reduce((s,r)=>s+(r.allocations?.['Modelling']||0),0);
+
+  const newStatus  = document.getElementById('schedStatus').value  || 'Active';
+  const statusNote = document.getElementById('statusChangeNote').value.trim();
+  const schedNotes = document.getElementById('schedNotes').value.trim();
+
+  const data = {
+    projectId       : pid,
+    urgency         : document.getElementById('schedUrgency').value || 'Medium',
+    schedStatus     : newStatus,
+    statusNote      : statusNote || null,
+    schedNotes      : schedNotes || null,
+    categories      : schedCategoryRows,                  // NEW
+    // Legacy compat (keep for existing getSchedStatus logic)
+    simulationHours : schedCategoryRows.find(c=>c.name==='Simulation')?.plannedHours || 0,
+    modellingHours  : schedCategoryRows.find(c=>c.name==='Modelling')?.plannedHours  || 0,
+    resources       : resources,
+    simulationPct   : Math.round(totalSimPct / TEAM_SIZE),
+    modellingPct    : Math.round(totalModPct / TEAM_SIZE),
+    startDate       : startVal,
+    endDate         : document.getElementById('schedEnd').value || null,
+    updatedAt       : firebase.firestore.FieldValue.serverTimestamp()
+  };
+
+  // Auto-add schedule categories to workCategories settings
+  const allNewCats = schedCategoryRows.map(r=>r.name).filter(n => !(S.settings.workCategories||[]).includes(n));
+  if (allNewCats.length && CONFIGURED && db){
+    const updatedCats = [...(S.settings.workCategories||[]), ...allNewCats];
+    S.settings.workCategories = updatedCats;
+    db.collection('settings').doc('main').update({ workCategories: updatedCats })
+      .catch(e => console.warn('workCategories sync', e));
+    populateProjectDropdowns();
+  }
+
+  // Sync schedule fields → project record (keeps Projects tab in sync automatically)
+  const totalSchedHrs = schedCategoryRows.reduce((s,c)=>s+c.plannedHours, 0);
+  if (CONFIGURED && db){
+    const projSync = {
+      status    : newStatus,
+      startDate : startVal,
+      categories: schedCategoryRows,
+      updatedAt : firebase.firestore.FieldValue.serverTimestamp()
+    };
+    const endDateVal   = document.getElementById('schedEnd').value;
+    if (endDateVal) projSync.endDate = endDateVal;
+    if (totalSchedHrs > 0) projSync.plannedHours = totalSchedHrs;
+    const schedType  = document.getElementById('schedProjType').value;
+    if (schedType)  projSync.type  = schedType;
+    const schedValue = parseFloat(document.getElementById('schedProjValue').value);
+    if (!isNaN(schedValue) && schedValue >= 0) projSync.value = schedValue;
+    const schedDesc  = document.getElementById('schedProjDesc').value.trim();
+    if (schedDesc)  projSync.desc  = schedDesc;
+    db.collection('projects').doc(pid).update(projSync)
+      .catch(e => console.warn('project sync from schedule:', e));
+  }
+
+  const editId = document.getElementById('editSchedId').value;
+  try {
+    if (editId){
+      await db.collection('schedules').doc(editId).update(data);
+    } else {
+      data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+      await db.collection('schedules').add(data);
+    }
+    schedModal.hide();
+    showToast(editId ? 'Schedule updated ✓' : 'Schedule added ✓', 'success');
+
+    // If an active project just went on hold, cancelled or completed, offer to redistribute hours
+    if (editId && _prevSchedStatus === 'Active'
+        && (newStatus === 'On Hold' || newStatus === 'Cancelled' || newStatus === 'Completed')){
+      // Give Firestore listener a moment to update scheduleEntries, then show dialog
+      setTimeout(() => {
+        const updated = scheduleEntries.find(e => e.id === editId);
+        if (updated) showFreedHoursDialog(updated);
+      }, 1200);
+    }
+  } catch(e){
+    showToast('Save failed: '+e.message, 'danger');
+    console.error('saveSchedule', e);
+  }
+}
+
+/* ── RESOURCE DAILY SCHEDULE TABLE ─────────────────────────────────── */
+function renderResourceDailySchedule(){
+  const div = document.getElementById('resDailySection');
+  if (!div) return;
+
+  // Only show active entries that have at least one assigned resource
+  const active = scheduleEntries.filter(e =>
+    (!e.schedStatus || e.schedStatus === 'Active') &&
+    (e.resources||[]).length > 0
+  );
+
+  if (!active.length){ div.innerHTML = ''; return; }
+
+  // Per team member, compute daily hours on each project
+  const memberRows = teamMembers.map(tm => {
+    const cells = active.map(e => {
+      const r = (e.resources||[]).find(r => r.id === tm.id);
+      if (!r) return { hrs:0, pct:0 };
+      const pct = Object.values(r.allocations||{}).reduce((s,v)=>s+v,0)
+               || (r.simPct||0)+(r.modPct||0);
+      return { hrs: pct/100*DAILY_HRS, pct };
+    });
+    const totalHrs = cells.reduce((s,c)=>s+c.hrs,0);
+    return { member:tm, cells, totalHrs };
+  });
+
+  // Project column headers
+  const headers = active.map(e => {
+    const proj = S.projects.find(p=>p.id===e.projectId);
+    return `<th style="text-align:center;padding:.3rem .5rem">${esc(proj?.num||'?')}<br>
+      <span style="font-weight:400;font-size:.7rem;white-space:nowrap">${esc((proj?.name||'').slice(0,14)+(proj?.name?.length>14?'…':''))}</span>
+    </th>`;
+  }).join('');
+
+  const bodyRows = memberRows.map(r => {
+    const over = r.totalHrs > DAILY_HRS + 0.01;
+    const cells = r.cells.map(c => {
+      if (c.hrs === 0) return `<td style="color:#ccc;text-align:center;padding:.3rem .5rem">—</td>`;
+      return `<td style="text-align:center;padding:.3rem .5rem">
+        <span style="font-weight:600">${c.hrs.toFixed(1)}h</span>
+        <br><span style="font-size:.7rem;color:#888">${c.pct}%</span>
+      </td>`;
+    }).join('');
+    return `<tr>
+      <td class="member-cell" style="padding:.3rem .6rem;font-weight:600;font-size:.83rem;white-space:nowrap;background:#fafbff">${esc(r.member.name)}</td>
+      ${cells}
+      <td style="text-align:center;padding:.3rem .5rem;font-weight:700;
+        color:${over?'var(--danger)':r.totalHrs>0?'var(--success)':'#ccc'}">
+        ${r.totalHrs > 0 ? r.totalHrs.toFixed(1)+'h' : '—'}
+        ${over ? '<br><span style="font-size:.7rem;font-weight:400">⚠ overloaded</span>' : ''}
+      </td>
+    </tr>`;
+  }).join('');
+
+  div.innerHTML = `
+    <div class="chart-wrap mt-3">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="fw-semibold mb-0">
+          <i class="bi bi-person-lines-fill me-1"></i>Resource Daily Schedule
+        </h6>
+        <span class="text-muted" style="font-size:.78rem">Active projects only — hours each person should spend per day</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="res-day-tbl">
+          <thead><tr>
+            <th style="text-align:left">Member</th>
+            ${headers}
+            <th style="text-align:center">Total/Day</th>
+          </tr></thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </div>
+      <div class="text-muted mt-1" style="font-size:.74rem">
+        ⚠ = over ${DAILY_HRS}h/day (resource overloaded — adjust allocations or project timelines).
+        Set member emails in Settings for actual-vs-planned tracking.
+      </div>
+    </div>`;
+}
+
+/* Delete a schedule entry */
+async function deleteSchedule(id){
+  if (!isAdmin()){ showToast('Admin only', 'danger'); return; }
+  if (!confirm('Remove this project from the schedule?')) return;
+  try {
+    await db.collection('schedules').doc(id).delete();
+    showToast('Schedule entry removed', 'success');
+  } catch(e){
+    showToast('Delete failed: '+e.message, 'danger');
+    console.error('deleteSchedule', e);
   }
 }
 </script>
