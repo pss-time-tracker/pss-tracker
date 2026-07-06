@@ -342,9 +342,9 @@
         </div>
         <div class="col-6 col-md-3">
           <div class="stat-card" style="border-top-color:var(--danger);cursor:pointer"
-               onclick="showProjectsDrilldown('behind')" title="Click — projects behind schedule">
+               onclick="showScheduleFiltered('behind')" title="Click — go to Schedule tab filtered to behind-schedule projects">
             <div class="val text-danger" id="dBehindCount">0</div>
-            <div class="lbl" style="color:var(--danger)">🔴 Behind Schedule <i class="bi bi-box-arrow-up-right" style="font-size:.7rem;opacity:.6"></i></div>
+            <div class="lbl" style="color:var(--danger)">🔴 Behind Schedule <i class="bi bi-arrow-right-circle" style="font-size:.7rem;opacity:.6"></i></div>
           </div>
         </div>
         <div class="col-6 col-md-3">
@@ -401,8 +401,8 @@
       <div class="chart-wrap">
         <div class="d-flex justify-content-between align-items-center mb-3">
           <h6 class="fw-semibold mb-0">Project Breakdown</h6>
-          <button class="btn btn-outline-success btn-sm" onclick="downloadDashboardExcel()">
-            <i class="bi bi-file-earmark-excel me-1"></i>Download Excel
+          <button class="btn btn-outline-success btn-sm" onclick="downloadDashboardExcel()" title="Full export — all projects, all time, all resources (ignores current filters)">
+            <i class="bi bi-file-earmark-excel me-1"></i>Full Export (.xlsx)
           </button>
         </div>
         <div class="table-responsive">
@@ -570,6 +570,32 @@
         </button>
       </div>
 
+      <!-- Filter bar -->
+      <div class="d-flex flex-wrap gap-2 mb-3 align-items-center" id="schedFilterBar"
+           style="background:#f8f9ff;border:1px solid #dde0ee;border-radius:10px;padding:.6rem .85rem">
+        <i class="bi bi-funnel text-muted" style="font-size:.9rem"></i>
+        <input type="text" id="schedFilterName" placeholder="Search project name…"
+               class="form-control form-control-sm" style="width:200px;font-size:.83rem"
+               oninput="applyScheduleFilter()">
+        <select id="schedFilterResource" class="form-select form-select-sm" style="width:160px;font-size:.83rem"
+                onchange="applyScheduleFilter()">
+          <option value="">All Resources</option>
+        </select>
+        <select id="schedFilterStatus" class="form-select form-select-sm" style="width:150px;font-size:.83rem"
+                onchange="applyScheduleFilter()">
+          <option value="">All Statuses</option>
+          <option value="Active">Active</option>
+          <option value="On Hold">On Hold</option>
+          <option value="Completed">Completed</option>
+          <option value="Cancelled">Cancelled</option>
+          <option value="behind">🔴 Behind Schedule</option>
+        </select>
+        <button class="btn btn-outline-secondary btn-sm" onclick="clearScheduleFilter()" title="Clear filters">
+          <i class="bi bi-x-lg me-1"></i>Clear
+        </button>
+        <span id="schedFilterCount" class="text-muted ms-auto" style="font-size:.78rem"></span>
+      </div>
+
       <!-- Summary cards -->
       <div class="row g-3 mb-3">
         <div class="col-6 col-md-3">
@@ -585,9 +611,10 @@
           </div>
         </div>
         <div class="col-6 col-md-3">
-          <div class="stat-card" style="border-top-color:var(--danger)">
-            <div class="val" id="sBehindCount">0</div>
-            <div class="lbl">Behind Schedule</div>
+          <div class="stat-card" style="border-top-color:var(--danger);cursor:pointer"
+               onclick="schedFilterQuick('behind')" title="Click to filter behind-schedule projects">
+            <div class="val text-danger" id="sBehindCount">0</div>
+            <div class="lbl" style="color:var(--danger)">🔴 Behind Schedule <i class="bi bi-funnel" style="font-size:.65rem;opacity:.6"></i></div>
           </div>
         </div>
         <div class="col-6 col-md-3">
@@ -605,6 +632,49 @@
       </div>
       <!-- Resource Daily Schedule table — rendered by renderResourceDailySchedule() -->
       <div id="resDailySection"></div>
+
+      <!-- Work Category Details -->
+      <div class="mt-4" id="catDetailsSection">
+        <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
+          <h6 class="mb-0 fw-bold"><i class="bi bi-layers me-1"></i>Work Category Details</h6>
+          <button class="btn btn-outline-success btn-sm" onclick="downloadCatDetailsExcel()">
+            <i class="bi bi-file-earmark-spreadsheet me-1"></i>Download Excel
+          </button>
+        </div>
+        <!-- Category filter bar -->
+        <div class="d-flex flex-wrap gap-2 mb-2 align-items-center"
+             style="background:#f8f9ff;border:1px solid #dde0ee;border-radius:10px;padding:.55rem .8rem">
+          <i class="bi bi-funnel text-muted" style="font-size:.85rem"></i>
+          <input type="text" id="catFilterProject" placeholder="Search project…"
+                 class="form-control form-control-sm" style="width:180px;font-size:.82rem"
+                 oninput="renderCategoryDetails()">
+          <select id="catFilterStatus" class="form-select form-select-sm" style="width:155px;font-size:.82rem"
+                  onchange="renderCategoryDetails()">
+            <option value="">All Statuses</option>
+            <option value="Not Started">Not Started</option>
+            <option value="In Progress">In Progress</option>
+            <option value="Completed">Completed</option>
+            <option value="On Hold">On Hold</option>
+            <option value="Cancelled">Cancelled</option>
+          </select>
+          <select id="catFilterSched" class="form-select form-select-sm" style="width:155px;font-size:.82rem"
+                  onchange="renderCategoryDetails()">
+            <option value="">All Schedule Status</option>
+            <option value="behind">Behind Schedule</option>
+            <option value="ontrack">On Track</option>
+            <option value="ahead">Ahead</option>
+          </select>
+          <input type="date" id="catFilterFrom" class="form-control form-control-sm" style="width:140px;font-size:.82rem"
+                 onchange="renderCategoryDetails()" title="Start date from">
+          <input type="date" id="catFilterTo" class="form-control form-control-sm" style="width:140px;font-size:.82rem"
+                 onchange="renderCategoryDetails()" title="Start date to">
+          <button class="btn btn-outline-secondary btn-sm" onclick="clearCatFilter()" title="Clear">
+            <i class="bi bi-x-lg"></i>
+          </button>
+          <span id="catFilterCount" class="text-muted ms-auto" style="font-size:.78rem"></span>
+        </div>
+        <div id="catDetailsTable" class="table-responsive"></div>
+      </div>
     </div>
 
     <!-- ── TEAM BANDWIDTH PAGE ───────────────────────────────────── -->
@@ -619,6 +689,18 @@
             <i class="bi bi-calendar-x me-1"></i>Submit Leave
           </button>
         </div>
+      </div>
+      <!-- Team Effort Summary -->
+      <div class="setting-section mb-4" id="teamEffortSection">
+        <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
+          <h6 class="mb-0"><i class="bi bi-bar-chart-steps me-1"></i>Team Effort Summary
+            <span class="badge ms-1" style="background:#e8eaf6;color:var(--primary);font-size:.7rem" id="teamEffortStatus">Loading…</span>
+          </h6>
+          <button class="btn btn-outline-success btn-sm" onclick="downloadTeamEffortExcel()">
+            <i class="bi bi-file-earmark-spreadsheet me-1"></i>Download Excel
+          </button>
+        </div>
+        <div id="teamEffortTable" class="table-responsive"></div>
       </div>
       <!-- Member bandwidth cards rendered here -->
       <div id="teamBandwidthCards" class="row g-3 mb-4"></div>
@@ -1167,6 +1249,7 @@
      BOOTSTRAP JS
 ════════════════════════════════════════════════════════════════ -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
 <script>
 /* ── Connection monitoring — registered once at module load ─── */
@@ -1251,6 +1334,7 @@ let dashProjMap  = {};  // projectId → {secs,count,users} — built by renderD
 
 // Schedule planner
 let scheduleEntries = [];
+let schedFilter = { name: '', resource: '', status: '' };  // active schedule filter
 let allProjectHrsMap = {};   // projectId → all-time logged hrs; populated by renderSchedule()
 let unsubSchedule   = null;
 let unsubTeam       = null;
@@ -1644,8 +1728,8 @@ function showPage(page){
   if (page==='sessions')  renderSessionLog();
   if (page==='dashboard') renderDashboard();
   if (page==='settings')  renderSettingsUI();
-  if (page==='schedule')  renderSchedule();
-  if (page==='team')      renderTeamBandwidth();
+  if (page==='schedule'){ populateSchedFilterResource(); renderSchedule(); renderCategoryDetails(); }
+  if (page==='team'){ renderTeamBandwidth(); renderTeamEffort(); }
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1752,6 +1836,19 @@ function confirmAddSlot(){
   const pid = document.getElementById('slotProject').value;
   const cat = document.getElementById('slotCategory').value;
   if (!pid) return;
+
+  // Block Completed / Cancelled projects
+  const _schedEntry = scheduleEntries.find(e => e.projectId === pid);
+  if (_schedEntry && ['Completed','Cancelled'].includes(_schedEntry.schedStatus)){
+    const _verb = _schedEntry.schedStatus === 'Completed' ? 'completed' : 'cancelled';
+    showToast(
+      `🚫 This project is marked as ${_schedEntry.schedStatus}. To log time, ask Prasad to change the project status.`,
+      'warning'
+    );
+    sessModal.hide();
+    return;
+  }
+
   const id = Date.now().toString();
   const t = { id, projectId:pid, category:cat, state:'stopped', elapsed:0, lastStart:null, sessionStart:null };
   activeTimers.push(t);
@@ -1922,6 +2019,7 @@ async function saveStop(skipNotes){
             ...session,
             createdAt: firebase.firestore.FieldValue.serverTimestamp()
           });
+          autoUpdateCategoryStatus(session.projectId, session.category);
         } catch(e){
           // Firestore write failed — fallback to offline queue
           console.warn('Firestore write failed, queuing', e);
@@ -2345,11 +2443,16 @@ async function renderSessionLog(){
     const startDate = s.startTime ? new Date(s.startTime).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}) : '';
     const endDate   = s.endTime   ? new Date(s.endTime).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}) : '';
     const isMultiDay = startDate && endDate && startDate !== endDate;
-    const canEdit = isAdmin() || s.userId === currentUser?.uid;
-    const editBtn = canEdit
+    const canEdit   = isAdmin() || s.userId === currentUser?.uid;
+    const editBtn   = canEdit
       ? `<button class="btn btn-outline-secondary btn-sm py-0 px-1" style="font-size:.72rem"
            onclick="openEditSession('${s.id}')" title="Edit session times / notes">
            <i class="bi bi-pencil"></i></button>`
+      : '';
+    const deleteBtn = canEdit
+      ? `<button class="btn btn-outline-danger btn-sm py-0 px-1" style="font-size:.72rem"
+           onclick="deleteSessionEntry('${s.id}')" title="Delete this session">
+           <i class="bi bi-trash3"></i></button>`
       : '';
     div.innerHTML=`
       <div class="d-flex justify-content-between align-items-start flex-wrap gap-1">
@@ -2362,6 +2465,7 @@ async function renderSessionLog(){
         <div class="d-flex align-items-center gap-2">
           <span class="dur">${secsToHMS(s.duration||0)}</span>
           ${editBtn}
+          ${deleteBtn}
         </div>
       </div>
       <div class="text-muted mt-1" style="font-size:.8rem">
@@ -2372,6 +2476,23 @@ async function renderSessionLog(){
       ${s.notes?`<div class="notes-text"><i class="bi bi-journal-text me-1"></i>${esc(s.notes)}</div>`:''}`;
     log.appendChild(div);
   });
+}
+
+async function deleteSessionEntry(sessionId){
+  if (!confirm('Delete this session log entry? This cannot be undone.')) return;
+  try {
+    if (CONFIGURED && db){
+      await db.collection('sessions').doc(sessionId).delete();
+    } else {
+      S.sessions = S.sessions.filter(s => s.id !== sessionId);
+    }
+    showToast('Session deleted', 'success');
+    renderSessionLog();
+    // Invalidate category detail cache so it refreshes
+    _catDetailSessions = [];
+  } catch(e){
+    showToast('Delete failed: ' + e.message, 'danger');
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -2832,89 +2953,198 @@ function populateSelect(id, opts, selected){
    EXCEL / CSV DOWNLOAD
 ═══════════════════════════════════════════════════════════════ */
 async function downloadDashboardExcel(){
-  const period   = document.getElementById('dashPeriod').value;
-  const year     = parseInt(document.getElementById('dashYear').value);
-  const month    = parseInt(document.getElementById('dashMonth').value);
-  const projFilt = document.getElementById('dashProjFilter')?.value || 'all';
+  const XLSX = window.XLSX;
+  if (!XLSX){ showToast('Excel library not loaded — try refreshing', 'danger'); return; }
 
-  let startDate, endDate;
-  if (period==='today'){
-    startDate = endDate = todayStr();
-  } else if (period==='week'){
-    const d=new Date(); d.setDate(d.getDate()-d.getDay());
-    startDate=d.toISOString().slice(0,10); endDate=todayStr();
-  } else {
-    startDate=`${year}-${String(month+1).padStart(2,'0')}-01`;
-    endDate=new Date(year,month+1,0).toISOString().slice(0,10);
+  showToast('Preparing full export…', 'info');
+
+  // ── Fetch ALL sessions (no date/project filter) ────────────────────
+  let allSessions = [];
+  try {
+    if (CONFIGURED && db){
+      const snap = await db.collection('sessions').orderBy('date').get();
+      allSessions = snap.docs.map(d => ({id: d.id, ...d.data()}));
+    } else {
+      allSessions = [...S.sessions].sort((a,b) => (a.date||'').localeCompare(b.date||''));
+    }
+  } catch(e){
+    showToast('Fetch error: ' + e.message, 'danger'); return;
   }
 
-  // Fetch sessions
-  let sessions=[];
-  if (CONFIGURED && db){
-    const snap=await db.collection('sessions').where('date','>=',startDate).where('date','<=',endDate).get().catch(()=>({docs:[]}));
-    sessions=snap.docs.map(d=>({id:d.id,...d.data()}));
-  } else {
-    sessions=S.sessions.filter(s=>s.date>=startDate&&s.date<=endDate);
-  }
-  if (!isAdmin()) sessions=sessions.filter(s=>s.userEmail!==ADMIN_EMAIL);
-  if (projFilt!=='all') sessions=sessions.filter(s=>s.projectId===projFilt);
+  const cur  = S.settings.currency || '₹';
+  const fmtN = v => v != null && v !== '' ? +parseFloat(v).toFixed(2) : '';
+  const fmtDT = iso => iso ? new Date(iso).toLocaleString('en-IN', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
 
-  // ── Sheet 1: Session details ──────────────────────────────
-  const sessRows=[['Date','Project No.','Project Name','Category','User','Start','End','Duration (hrs)','Notes']];
-  sessions.forEach(s=>{
-    const proj=S.projects.find(p=>p.id===s.projectId);
-    sessRows.push([
-      s.date||'',
-      proj?proj.num:'',
-      proj?proj.name:'Unknown',
-      s.category||'',
-      s.userName||'',
-      s.startTime?new Date(s.startTime).toLocaleString('en-IN'):'',
-      s.endTime  ?new Date(s.endTime).toLocaleString('en-IN'):'',
-      ((s.duration||0)/3600).toFixed(2),
-      s.notes||''
-    ]);
+  // ── Per-project & per-resource aggregation ─────────────────────────
+  // projAgg[pid] = { totalHrs, sessions, byMember:{email→{name,hrs,cats:{cat→hrs}}} }
+  const projAgg = {};
+  allSessions.forEach(s => {
+    const pid = s.projectId;
+    if (!projAgg[pid]) projAgg[pid] = { totalHrs:0, sessions:0, byMember:{} };
+    const hrs  = (s.duration||0) / 3600;
+    const email= (s.userEmail||'unknown').toLowerCase();
+    const name = s.userName || email;
+    projAgg[pid].totalHrs  += hrs;
+    projAgg[pid].sessions  += 1;
+    if (!projAgg[pid].byMember[email]) projAgg[pid].byMember[email] = {name, hrs:0, cats:{}};
+    projAgg[pid].byMember[email].hrs += hrs;
+    const cat = s.category || 'General';
+    projAgg[pid].byMember[email].cats[cat] = (projAgg[pid].byMember[email].cats[cat]||0) + hrs;
   });
 
-  // ── Sheet 2: Project summary ──────────────────────────────
-  const projMap={};
-  sessions.forEach(s=>{
-    if (!projMap[s.projectId]) projMap[s.projectId]={secs:0,count:0,users:{}};
-    projMap[s.projectId].secs+=s.duration||0;
-    projMap[s.projectId].count+=1;
-    const u=s.userName||'?';
-    projMap[s.projectId].users[u]=(projMap[s.projectId].users[u]||0)+(s.duration||0)/3600;
+  // Collect all unique member names for dynamic columns
+  const allMemberEmails = [...new Set(allSessions.map(s=>(s.userEmail||'unknown').toLowerCase()))];
+  const emailToName = {};
+  allSessions.forEach(s => { emailToName[(s.userEmail||'unknown').toLowerCase()] = s.userName || s.userEmail || '?'; });
+  // Prefer teamMembers name if available
+  teamMembers.forEach(m => { if (m.email) emailToName[m.email.toLowerCase()] = m.name; });
+
+  // ────────────────────────────────────────────────────────────────────
+  // SHEET 1 — Project Summary
+  // ────────────────────────────────────────────────────────────────────
+  const memberCols = allMemberEmails.map(e => emailToName[e] || e);
+  const sheet1Header = [
+    'Project No.', 'Project Name', 'Type', 'Project Status',
+    'Schedule Status', 'Urgency',
+    'Start Date', 'End Date',
+    'Planned Hrs', 'Actual Hrs', 'Progress %',
+    `Value (${cur})`, `Cost Rate`,
+    'Sessions',
+    ...memberCols.map(n => `${n} (hrs)`),
+    'Work Categories'
+  ];
+
+  const sheet1Rows = S.projects.map(p => {
+    const schedEntry = scheduleEntries.find(e => e.projectId === p.id);
+    const agg        = projAgg[p.id] || {totalHrs:0, sessions:0, byMember:{}};
+    const actualHrs  = agg.totalHrs;
+    const plannedHrs = schedEntry
+      ? (schedEntry.categories?.length
+          ? schedEntry.categories.reduce((s,c)=>s+c.plannedHours,0)
+          : (schedEntry.simulationHours||0)+(schedEntry.modellingHours||0))
+      : (p.plannedHours || 0);
+
+    const pct = plannedHrs > 0 ? Math.round(actualHrs / plannedHrs * 100) : '';
+
+    // Schedule status
+    let schedStatus = '—';
+    if (schedEntry){
+      const isInactive = ['On Hold','Cancelled','Completed'].includes(schedEntry.schedStatus);
+      if (isInactive) schedStatus = schedEntry.schedStatus;
+      else {
+        const st = getSchedStatus(schedEntry, actualHrs);
+        schedStatus = st.label || st.key;
+      }
+    }
+
+    // Work categories with status
+    const cats = schedEntry?.categories?.length
+      ? schedEntry.categories.map(c => `${c.name} (${c.plannedHours}h, ${c.status||'Not Started'})`).join('; ')
+      : '—';
+
+    // Per-member hours columns (in same order as header)
+    const memberHrsCols = allMemberEmails.map(email => {
+      const mb = agg.byMember[email];
+      return mb ? fmtN(mb.hrs) : '';
+    });
+
+    return [
+      p.num  || '—',
+      p.name || '—',
+      p.type || '—',
+      schedEntry?.schedStatus || p.status || 'Active',
+      schedStatus,
+      schedEntry?.urgency || '—',
+      schedEntry?.startDate || '—',
+      schedEntry?.endDate   || '—',
+      plannedHrs || '',
+      fmtN(actualHrs),
+      pct,
+      p.value || '',
+      '',                          // cost rate placeholder
+      agg.sessions,
+      ...memberHrsCols,
+      cats
+    ];
   });
 
-  const sumRows=[['Project No.','Project Name','Total Hours','Sessions','Budget Hours','Progress %','Team Breakdown']];
-  S.projects.filter(p=>projMap[p.id]).forEach(p=>{
-    const pm=projMap[p.id];
-    const hrs=(pm.secs/3600).toFixed(2);
-    const pct=p.plannedHours?Math.round(hrs/p.plannedHours*100):'';
-    const team=Object.entries(pm.users).map(([n,h])=>`${n}: ${h.toFixed(1)}h`).join('; ');
-    sumRows.push([p.num,p.name,hrs,pm.count,p.plannedHours||'',pct,team]);
+  // ────────────────────────────────────────────────────────────────────
+  // SHEET 2 — Resource Effort (one row per project × resource)
+  // ────────────────────────────────────────────────────────────────────
+  const sheet2Header = ['Project No.','Project Name','Resource','Email','Total Hours (hrs)','Categories Breakdown','Schedule Status','Start Date','End Date'];
+  const sheet2Rows   = [];
+  S.projects.forEach(p => {
+    const schedEntry = scheduleEntries.find(e => e.projectId === p.id);
+    const agg        = projAgg[p.id];
+    if (!agg) return;
+
+    let schedStatus = '—';
+    if (schedEntry){
+      const isInactive = ['On Hold','Cancelled','Completed'].includes(schedEntry.schedStatus);
+      if (isInactive) schedStatus = schedEntry.schedStatus;
+      else schedStatus = getSchedStatus(schedEntry, agg.totalHrs).label || '—';
+    }
+
+    Object.entries(agg.byMember).forEach(([email, mb]) => {
+      const catBreakdown = Object.entries(mb.cats)
+        .sort((a,b)=>b[1]-a[1])
+        .map(([cat,hrs])=>`${cat}: ${hrs.toFixed(2)}h`)
+        .join('; ');
+      sheet2Rows.push([
+        p.num  || '—',
+        p.name || '—',
+        mb.name,
+        email,
+        fmtN(mb.hrs),
+        catBreakdown,
+        schedStatus,
+        schedEntry?.startDate || '—',
+        schedEntry?.endDate   || '—'
+      ]);
+    });
   });
 
-  // Build CSV with two sections separated by blank line
-  const csvLine=row=>row.map(c=>`"${String(c||'').replace(/"/g,'""')}"`).join(',');
-  const csv=[
-    `PSS Time Tracker Export — ${startDate} to ${endDate}`,
-    '',
-    '=== SESSION LOG ===',
-    ...sessRows.map(csvLine),
-    '',
-    '=== PROJECT SUMMARY ===',
-    ...sumRows.map(csvLine)
-  ].join('\n');
+  // ────────────────────────────────────────────────────────────────────
+  // SHEET 3 — Raw Session Log (all sessions, all time)
+  // ────────────────────────────────────────────────────────────────────
+  const sheet3Header = ['Date','Project No.','Project Name','Category','Resource','Email','Start Time','End Time','Duration (hrs)','Notes'];
+  const sheet3Rows   = allSessions.map(s => {
+    const proj = S.projects.find(p => p.id === s.projectId);
+    return [
+      s.date || '',
+      proj?.num  || '—',
+      proj?.name || s.projectId || 'Unknown',
+      s.category || '',
+      s.userName || '',
+      s.userEmail|| '',
+      fmtDT(s.startTime),
+      fmtDT(s.endTime),
+      fmtN((s.duration||0)/3600),
+      s.notes || ''
+    ];
+  });
 
-  const blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url;
-  a.download=`PSS_Dashboard_${startDate}_to_${endDate}.csv`;
-  document.body.appendChild(a); a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  // ── Build workbook ─────────────────────────────────────────────────
+  const wb = XLSX.utils.book_new();
+
+  const ws1 = XLSX.utils.aoa_to_sheet([sheet1Header, ...sheet1Rows]);
+  const ws2 = XLSX.utils.aoa_to_sheet([sheet2Header, ...sheet2Rows]);
+  const ws3 = XLSX.utils.aoa_to_sheet([sheet3Header, ...sheet3Rows]);
+
+  // Column widths
+  const setWidths = (ws, widths) => { ws['!cols'] = widths.map(w=>({wch:w})); };
+  setWidths(ws1, [10,28,14,14,16,10,12,12,12,12,11,12,10,8,...allMemberEmails.map(()=>14),30]);
+  setWidths(ws2, [10,28,18,26,14,35,16,12,12]);
+  setWidths(ws3, [12,10,28,16,18,26,20,20,14,30]);
+
+  XLSX.utils.book_append_sheet(wb, ws1, 'Project Summary');
+  XLSX.utils.book_append_sheet(wb, ws2, 'Resource Effort');
+  XLSX.utils.book_append_sheet(wb, ws3, 'Raw Sessions');
+
+  const now   = new Date();
+  const stamp = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+  XLSX.writeFile(wb, `PSS_Full_Export_${stamp}.xlsx`);
+  showToast('Export complete ✓', 'success');
 }
 
 /* ── Admin: Export all logs for chosen period ── */
@@ -3059,6 +3289,64 @@ function populateProjectDropdowns(){
 /* ═══════════════════════════════════════════════════════════════
    SCHEDULE PLANNER
 ═══════════════════════════════════════════════════════════════ */
+
+/* ── SCHEDULE FILTER ───────────────────────────────────────────────── */
+function populateSchedFilterResource(){
+  const sel = document.getElementById('schedFilterResource');
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">All Resources</option>';
+  teamMembers.forEach(m => {
+    const o = document.createElement('option');
+    o.value = m.id; o.textContent = m.name;
+    if (m.id === prev) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+function applyScheduleFilter(){
+  schedFilter.name     = (document.getElementById('schedFilterName')?.value || '').toLowerCase().trim();
+  schedFilter.resource = document.getElementById('schedFilterResource')?.value || '';
+  schedFilter.status   = document.getElementById('schedFilterStatus')?.value || '';
+  renderSchedule();
+}
+
+function clearScheduleFilter(){
+  schedFilter = { name:'', resource:'', status:'' };
+  const n = document.getElementById('schedFilterName');
+  const r = document.getElementById('schedFilterResource');
+  const s = document.getElementById('schedFilterStatus');
+  if (n) n.value = '';
+  if (r) r.value = '';
+  if (s) s.value = '';
+  renderSchedule();
+}
+
+// Deep-link: navigate to Schedule tab and pre-filter by status
+function showScheduleFiltered(statusVal){
+  schedFilter = { name:'', resource:'', status: statusVal };
+  const n = document.getElementById('schedFilterName');
+  const r = document.getElementById('schedFilterResource');
+  const s = document.getElementById('schedFilterStatus');
+  if (n) n.value = '';
+  if (r) r.value = '';
+  if (s) s.value = statusVal;
+  showPage('schedule');
+}
+
+// Quick-filter within the schedule tab (e.g. click a summary tile)
+function schedFilterQuick(statusVal){
+  schedFilter.status   = schedFilter.status === statusVal ? '' : statusVal;  // toggle
+  schedFilter.name     = '';
+  schedFilter.resource = '';
+  const n = document.getElementById('schedFilterName');
+  const r = document.getElementById('schedFilterResource');
+  const s = document.getElementById('schedFilterStatus');
+  if (n) n.value = '';
+  if (r) r.value = '';
+  if (s) s.value = schedFilter.status;
+  renderSchedule();
+}
 
 /* Get schedule status for an entry given actual hours logged */
 /* ── TEAM MEMBERS SETTINGS ─────────────────────────────────────────── */
@@ -3250,10 +3538,16 @@ function renderSchedCatList(){
   if (!schedCategoryRows.length){
     box.innerHTML = '<div class="text-muted" style="font-size:.8rem;padding:.25rem 0">No categories added yet.</div>';
   } else {
+    const catStatusOpts = ['Not Started','In Progress','Completed','On Hold','Cancelled'];
+    const catStatusColors = {'Not Started':'#546e7a','In Progress':'#1565c0','Completed':'#2e7d32','On Hold':'#e65100','Cancelled':'#757575'};
     box.innerHTML = schedCategoryRows.map((r,i) => `
       <div class="d-flex align-items-center gap-1 px-2 py-1 rounded" style="background:#eef0f5;border:1px solid #dde0ee">
         <span class="fw-semibold" style="font-size:.82rem">${esc(r.name)}</span>
         <span class="text-muted" style="font-size:.77rem">&nbsp;${r.plannedHours}h</span>
+        <select class="form-select form-select-sm py-0 px-1 ms-1" style="font-size:.73rem;height:1.5rem;width:auto;border-color:#ccd;color:${catStatusColors[r.status||'Not Started']||'#444'}"
+          onchange="updateSchedCatStatus(${i}, this.value)">
+          ${catStatusOpts.map(s=>`<option value="${s}" ${(r.status||'Not Started')===s?'selected':''}>${s}</option>`).join('')}
+        </select>
         <button class="btn p-0 ms-1 lh-1" onclick="removeSchedCategory(${i})" title="Remove">
           <i class="bi bi-x-circle text-danger" style="font-size:.85rem"></i>
         </button>
@@ -3277,7 +3571,7 @@ function addSchedCategory(){
   if (schedCategoryRows.find(r => r.name.toLowerCase() === name.toLowerCase())){
     showToast('Category already added', 'warning'); return;
   }
-  schedCategoryRows.push({name, plannedHours: hrs});
+  schedCategoryRows.push({name, plannedHours: hrs, status: 'Not Started'});
   // Clear inputs
   picker.value = ''; custom.value = '';
   document.getElementById('schedCatHrs').value = '';
@@ -3287,6 +3581,30 @@ function addSchedCategory(){
 function removeSchedCategory(idx){
   schedCategoryRows.splice(idx,1);
   renderSchedCatList();
+}
+
+function updateSchedCatStatus(idx, newStatus){
+  if (schedCategoryRows[idx]) schedCategoryRows[idx].status = newStatus;
+}
+
+async function openCatStatusEditor(schedId, catName){
+  if (!isAdmin()) return;
+  const entry = scheduleEntries.find(e => e.id === schedId);
+  if (!entry) return;
+  const cat = (entry.categories||[]).find(c => c.name === catName);
+  const curStatus = cat?.status || 'Not Started';
+  const opts = ['Not Started','In Progress','Completed','On Hold','Cancelled'];
+  const newStatus = opts[(opts.indexOf(curStatus) + 1) % opts.length];
+  if (!confirm(`Change "${catName}" status from "${curStatus}" → "${newStatus}"?`)) return;
+  const updatedCats = (entry.categories||[]).map(c =>
+    c.name === catName ? {...c, status: newStatus} : c
+  );
+  try {
+    await db.collection('schedules').doc(schedId).update({categories: updatedCats});
+    showToast(`${catName} → ${newStatus}`, 'success');
+  } catch(e){
+    showToast('Update failed: '+e.message, 'danger');
+  }
 }
 
 /* Populate the "Add team member" dropdown with unassigned members */
@@ -3890,18 +4208,70 @@ async function renderSchedule(){
   const urgencyOrder = {High:0, Medium:1, Low:2};
   // Status sort: Active first, then On Hold, then Cancelled
   const statusOrder  = {'Active':0,'On Hold':1,'Completed':2,'Cancelled':3};
-  const sorted = [...scheduleEntries].sort((a,b) => {
+  let sorted = [...scheduleEntries].sort((a,b) => {
     const sd = (statusOrder[a.schedStatus||'Active']||0) - (statusOrder[b.schedStatus||'Active']||0);
     if (sd !== 0) return sd;
     return (urgencyOrder[a.urgency]||1) - (urgencyOrder[b.urgency]||1);
   });
+
+  // ── Apply filters ───────────────────────────────────────────────────
+  populateSchedFilterResource();  // keep resource dropdown in sync with team
+  const _fName     = schedFilter.name;
+  const _fResource = schedFilter.resource;
+  const _fStatus   = schedFilter.status;
+  const _hasFilter = _fName || _fResource || _fStatus;
+
+  if (_hasFilter){
+    sorted = sorted.filter(entry => {
+      const proj   = S.projects.find(p=>p.id===entry.projectId);
+      const schedSt = entry.schedStatus || 'Active';
+      // Name filter
+      if (_fName){
+        const projName = (proj?.name||'').toLowerCase();
+        const projNum  = (proj?.num ||'').toLowerCase();
+        if (!projName.includes(_fName) && !projNum.includes(_fName)) return false;
+      }
+      // Resource filter
+      if (_fResource){
+        const hasRes = (entry.resources||[]).some(r => r.id === _fResource);
+        if (!hasRes) return false;
+      }
+      // Status filter — special case 'behind'
+      if (_fStatus === 'behind'){
+        const isInact = ['On Hold','Cancelled','Completed'].includes(schedSt);
+        if (isInact) return false;
+        if (getSchedStatus(entry, actualHrsMap[entry.projectId]||0).key !== 'behind') return false;
+      } else if (_fStatus){
+        if (schedSt !== _fStatus) return false;
+      }
+      return true;
+    });
+  }
+
+  // Show/hide filter count
+  const countEl = document.getElementById('schedFilterCount');
+  if (countEl){
+    countEl.textContent = _hasFilter
+      ? `Showing ${sorted.length} of ${scheduleEntries.length} projects`
+      : `${scheduleEntries.length} project${scheduleEntries.length!==1?'s':''}`;
+    countEl.style.color = _hasFilter && sorted.length === 0 ? 'var(--danger)' : '#888';
+  }
+  if (!sorted.length && _hasFilter){
+    list.innerHTML = `<div class="text-center text-muted py-5">
+      <i class="bi bi-funnel" style="font-size:2rem;opacity:.3"></i>
+      <div class="mt-2">No projects match the current filters.</div>
+      <button class="btn btn-outline-secondary btn-sm mt-2" onclick="clearScheduleFilter()">
+        <i class="bi bi-x-lg me-1"></i>Clear Filters
+      </button></div>`;
+    // Still compute summary stats from full list (not filtered)
+  }
 
   let onTrack=0, behind=0, ahead=0;
   // Team utilisation: total committed daily hrs across all active entries / max possible daily hrs
   // Uses ALL categories (not just Simulation + Modelling)
   let totalCommittedDailyHrs = 0;
   const maxDailyHrs = teamMembers.length * DAILY_HRS;  // e.g. 4 members × 8h = 32h/day
-  list.innerHTML='';
+  list.innerHTML = _hasFilter && !sorted.length ? list.innerHTML : '';
 
   sorted.forEach(entry=>{
     const proj       = S.projects.find(p=>p.id===entry.projectId);
@@ -3993,16 +4363,27 @@ async function renderSchedule(){
 
     const fmtDS = ds => new Date(ds).toLocaleDateString('en-IN',{day:'numeric',month:'short'});
 
-    const catsHtml = _seqDates.map((sd, i) => `
+    const _catStatusColor = {'Not Started':'#546e7a','In Progress':'#1565c0','Completed':'#2e7d32','On Hold':'#e65100','Cancelled':'#9e9e9e'};
+    const _catStatusBg    = {'Not Started':'#eceff1','In Progress':'#e3f2fd','Completed':'#e8f5e9','On Hold':'#fff3e0','Cancelled':'#f5f5f5'};
+    const catsHtml = _seqDates.map((sd, i) => {
+      const catObj   = cats[i] || {};
+      const catSt    = catObj.status || 'Not Started';
+      const stColor  = _catStatusColor[catSt] || '#444';
+      const stBg     = _catStatusBg[catSt] || '#eef0f5';
+      const stDot    = {'Not Started':'⬜','In Progress':'🔵','Completed':'✅','On Hold':'⏸','Cancelled':'⛔'}[catSt]||'';
+      return `
       <div class="d-inline-flex align-items-center me-3 mb-1"
-           style="background:#f3f4fb;border-radius:6px;padding:.2rem .5rem;border-left:3px solid var(--pl)">
+           style="background:#f3f4fb;border-radius:6px;padding:.2rem .5rem;border-left:3px solid ${stColor}">
         <span class="badge me-1" style="background:#e8eaf6;color:var(--primary);font-size:.68rem;padding:.15rem .35rem">${i+1}</span>
         <span class="fw-semibold me-1">${esc(sd.name)}</span>
+        <span style="background:${stBg};color:${stColor};font-size:.68rem;padding:.1rem .3rem;border-radius:4px;font-weight:600;margin-right:.25rem">${stDot} ${catSt}</span>
         <span class="text-primary me-1" style="font-weight:600">${sd.planned}h</span>
         <span class="text-muted" style="font-size:.73rem">${catDailyCapacity(resources,sd.name).toFixed(1)}h/day</span>
         ${sd.days > 0 ? `<span class="text-muted ms-1" style="font-size:.73rem">· ${fmtDS(sd.startStr)}→${fmtDS(sd.endStr)}</span>` : ''}
         ${sd.hasLeaveImpact ? `<span style="color:#e65100;font-size:.68rem;margin-left:.3rem" title="Leave days of assigned resources excluded">✈</span>` : ''}
-      </div>`).join('');
+        ${isAdmin() ? `<button class="btn p-0 ms-1" style="font-size:.65rem;opacity:.6;line-height:1" title="Change status" onclick="openCatStatusEditor('${entry.id}','${esc(catObj.name||sd.name)}')"><i class="bi bi-pencil-square"></i></button>` : ''}
+      </div>`;
+    }).join('');
 
     const endDriftHtml = (_endDrift && !isInactive) ? `
       <div class="d-flex align-items-center gap-2 mt-1 px-2 py-1"
@@ -4132,6 +4513,8 @@ async function renderSchedule(){
   document.getElementById('sBehindCount').textContent  = behind;
 
   renderResourceDailySchedule();
+  _catDetailSessions = [];
+  renderCategoryDetails();
 }
 
 /* Check behind schedule on login and show popup */
@@ -4331,7 +4714,7 @@ function openEditSchedule(id){
 
   // Load categories (new format) or build from legacy sim/mod hours
   if (entry.categories && entry.categories.length) {
-    schedCategoryRows = entry.categories.map(c => ({name: c.name, plannedHours: c.plannedHours}));
+    schedCategoryRows = entry.categories.map(c => ({name: c.name, plannedHours: c.plannedHours, status: c.status||'Not Started'}));
   } else {
     schedCategoryRows = [];
     if (entry.simulationHours > 0) schedCategoryRows.push({name:'Simulation', plannedHours: entry.simulationHours});
@@ -5110,6 +5493,229 @@ async function rejectLeave(leaveId){
   }
 }
 
+/* Auto-update category status from "Not Started" → "In Progress" when a session is logged */
+async function autoUpdateCategoryStatus(projectId, category){
+  if (!CONFIGURED || !db || !projectId || !category) return;
+  const entry = scheduleEntries.find(e => e.projectId === projectId);
+  if (!entry || !entry.categories?.length) return;
+  const cat = entry.categories.find(c => c.name.toLowerCase() === category.toLowerCase());
+  if (!cat || cat.status !== 'Not Started') return;  // only promote from Not Started
+  const updatedCats = entry.categories.map(c =>
+    c.name === cat.name ? {...c, status: 'In Progress'} : c
+  );
+  try {
+    await db.collection('schedules').doc(entry.id).update({categories: updatedCats});
+    // Real-time listener updates scheduleEntries automatically
+  } catch(e){
+    console.warn('autoUpdateCategoryStatus', e);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   WORK CATEGORY DETAILS
+═══════════════════════════════════════════════════════════════ */
+let _catDetailSessions = [];   // cached for download
+
+async function renderCategoryDetails(){
+  const tableEl = document.getElementById('catDetailsTable');
+  if (!tableEl) return;
+
+  // Fetch all sessions once (cache for Excel download)
+  if (!_catDetailSessions.length){
+    try {
+      if (CONFIGURED && db){
+        const snap = await db.collection('sessions').get();
+        _catDetailSessions = snap.docs.map(d=>({id:d.id,...d.data()}));
+      } else {
+        _catDetailSessions = [...S.sessions];
+      }
+    } catch(e){ _catDetailSessions = [...S.sessions]; }
+  }
+
+  // Aggregate: project × category → hours, resources
+  const rows = [];  // {proj, entry, cat, catActualHrs, byMember}
+  scheduleEntries.forEach(entry => {
+    const proj = S.projects.find(p => p.id === entry.projectId);
+    const cats = entry.categories?.length ? entry.categories
+      : [{name:'Simulation',plannedHours:entry.simulationHours||0,status:'Not Started'},
+         {name:'Modelling', plannedHours:entry.modellingHours||0, status:'Not Started'}].filter(c=>c.plannedHours>0);
+
+    // Sessions for this project
+    const projSessions = _catDetailSessions.filter(s => s.projectId === entry.projectId);
+
+    cats.forEach(cat => {
+      // Sessions for this category (fuzzy match same as catType)
+      const catSess = projSessions.filter(s =>
+        (s.category||'').toLowerCase() === cat.name.toLowerCase()
+      );
+      const catActualHrs = catSess.reduce((t,s) => t+(s.duration||0)/3600, 0);
+
+      // Per-member breakdown
+      const byMember = {};
+      catSess.forEach(s => {
+        const email = (s.userEmail||'').toLowerCase();
+        const name  = s.userName || email;
+        byMember[email] = { name, hrs: (byMember[email]?.hrs||0) + (s.duration||0)/3600 };
+      });
+
+      // Schedule status for this category
+      const planned = cat.plannedHours || 0;
+      let schedKey = 'ontrack', schedLabel = 'On Track';
+      if (planned > 0){
+        const pct = catActualHrs / planned * 100;
+        if (catActualHrs > planned)   { schedKey='ahead';   schedLabel='Ahead'; }
+        else {
+          // Use project-level dates to determine behind/ontrack
+          const projSt = getSchedStatus(entry, _catDetailSessions.filter(s=>s.projectId===entry.projectId).reduce((t,s)=>t+(s.duration||0)/3600,0));
+          if (projSt.key === 'behind') { schedKey='behind'; schedLabel='Behind Schedule'; }
+          else schedKey='ontrack';
+        }
+      }
+
+      rows.push({ proj, entry, cat, catActualHrs, byMember, schedKey, schedLabel });
+    });
+  });
+
+  // Apply filters
+  const fProj   = (document.getElementById('catFilterProject')?.value||'').toLowerCase().trim();
+  const fStatus = document.getElementById('catFilterStatus')?.value  || '';
+  const fSched  = document.getElementById('catFilterSched')?.value   || '';
+  const fFrom   = document.getElementById('catFilterFrom')?.value    || '';
+  const fTo     = document.getElementById('catFilterTo')?.value      || '';
+
+  const filtered = rows.filter(r => {
+    if (fProj   && !(r.proj?.name||'').toLowerCase().includes(fProj)
+                && !(r.proj?.num||'').toLowerCase().includes(fProj)) return false;
+    if (fStatus && (r.cat.status||'Not Started') !== fStatus) return false;
+    if (fSched  && r.schedKey !== fSched) return false;
+    if (fFrom   && r.entry.startDate && r.entry.startDate < fFrom) return false;
+    if (fTo     && r.entry.startDate && r.entry.startDate > fTo)   return false;
+    return true;
+  });
+
+  const countEl = document.getElementById('catFilterCount');
+  if (countEl) countEl.textContent = `${filtered.length} of ${rows.length} categories`;
+
+  if (!filtered.length){
+    tableEl.innerHTML = `<p class="text-center text-muted py-4"><i class="bi bi-layers me-1"></i>No categories match the filters.</p>`;
+    return;
+  }
+
+  const schedColor = {'behind':'var(--danger)','ontrack':'var(--warning)','ahead':'var(--success)'};
+  const statusColor = {'Not Started':'#546e7a','In Progress':'#1565c0','Completed':'#2e7d32','On Hold':'#e65100','Cancelled':'#9e9e9e'};
+  const statusBg    = {'Not Started':'#eceff1','In Progress':'#e3f2fd','Completed':'#e8f5e9','On Hold':'#fff3e0','Cancelled':'#f5f5f5'};
+
+  tableEl.innerHTML = `
+    <table class="table table-sm table-hover mb-0" style="min-width:700px;font-size:.83rem">
+      <thead class="table-light">
+        <tr>
+          <th>Project</th>
+          <th>Category</th>
+          <th>Cat. Status</th>
+          <th class="text-center">Planned (h)</th>
+          <th class="text-center">Actual (h)</th>
+          <th class="text-center">%</th>
+          <th>Schedule</th>
+          <th>Start Date</th>
+          <th>End Date</th>
+          <th>Resources</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${filtered.map(r => {
+          const planned = r.cat.plannedHours || 0;
+          const pct     = planned > 0 ? Math.min(999, Math.round(r.catActualHrs / planned * 100)) : '—';
+          const catSt   = r.cat.status || 'Not Started';
+          const stCol   = statusColor[catSt] || '#444';
+          const stBg    = statusBg[catSt]    || '#eef0f5';
+          const sCol    = schedColor[r.schedKey] || '#888';
+          const resources = Object.values(r.byMember).map(m => `${esc(m.name)}: ${m.hrs.toFixed(1)}h`).join(', ') || '—';
+          const projLabel = r.proj ? `<span class="fw-semibold text-primary">${esc(r.proj.num||'')}</span> ${esc(r.proj.name||'')}` : '—';
+          const barPct  = planned > 0 ? Math.min(100, r.catActualHrs / planned * 100).toFixed(1) : 0;
+          return `<tr>
+            <td style="white-space:nowrap">${projLabel}</td>
+            <td class="fw-semibold">${esc(r.cat.name)}</td>
+            <td>
+              <span style="background:${stBg};color:${stCol};font-size:.72rem;padding:.1rem .35rem;border-radius:4px;font-weight:600;white-space:nowrap">
+                ${catSt}
+              </span>
+            </td>
+            <td class="text-center">${planned||'—'}</td>
+            <td class="text-center" style="font-weight:600;color:${r.catActualHrs>0?'var(--primary)':'#bbb'}">${r.catActualHrs.toFixed(1)}</td>
+            <td class="text-center">
+              ${planned > 0 ? `<div style="min-width:60px">
+                <div class="progress mb-0" style="height:5px"><div class="progress-bar" style="width:${barPct}%;background:${sCol}"></div></div>
+                <span style="font-size:.72rem;color:${sCol}">${pct}%</span>
+              </div>` : '—'}
+            </td>
+            <td style="white-space:nowrap;color:${sCol};font-weight:600;font-size:.78rem">${r.schedLabel}</td>
+            <td style="font-size:.78rem">${r.entry.startDate||'—'}</td>
+            <td style="font-size:.78rem">${r.entry.endDate||'—'}</td>
+            <td style="font-size:.78rem;color:#555">${resources}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+}
+
+function clearCatFilter(){
+  ['catFilterProject','catFilterStatus','catFilterSched','catFilterFrom','catFilterTo']
+    .forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+  renderCategoryDetails();
+}
+
+async function downloadCatDetailsExcel(){
+  const XLSX = window.XLSX;
+  if (!XLSX){ showToast('Excel library not loaded','danger'); return; }
+
+  // Ensure sessions are loaded
+  if (!_catDetailSessions.length) await renderCategoryDetails();
+
+  const header = ['Project No.','Project Name','Category','Category Status','Planned Hrs','Actual Hrs','Progress %','Schedule Status','Start Date','End Date','Resources Detail'];
+  const dataRows = [];
+
+  scheduleEntries.forEach(entry => {
+    const proj = S.projects.find(p=>p.id===entry.projectId);
+    const cats = entry.categories?.length ? entry.categories
+      : [{name:'Simulation',plannedHours:entry.simulationHours||0,status:'Not Started'},
+         {name:'Modelling',plannedHours:entry.modellingHours||0,status:'Not Started'}].filter(c=>c.plannedHours>0);
+    const projSessions = _catDetailSessions.filter(s=>s.projectId===entry.projectId);
+    const projActual   = projSessions.reduce((t,s)=>t+(s.duration||0)/3600,0);
+    const projSt       = getSchedStatus(entry, projActual);
+
+    cats.forEach(cat => {
+      const catSess = projSessions.filter(s=>(s.category||'').toLowerCase()===cat.name.toLowerCase());
+      const actual  = catSess.reduce((t,s)=>t+(s.duration||0)/3600,0);
+      const pct     = cat.plannedHours > 0 ? Math.round(actual/cat.plannedHours*100) : '';
+      const byM     = {};
+      catSess.forEach(s=>{
+        const nm = s.userName||s.userEmail||'?';
+        byM[nm] = (byM[nm]||0)+(s.duration||0)/3600;
+      });
+      const resources = Object.entries(byM).map(([n,h])=>`${n}: ${h.toFixed(2)}h`).join('; ');
+      let schedLabel = 'On Track';
+      if (actual > cat.plannedHours && cat.plannedHours>0) schedLabel='Ahead';
+      else if (projSt.key==='behind') schedLabel='Behind Schedule';
+
+      dataRows.push([
+        proj?.num||'',proj?.name||entry.projectId,
+        cat.name,cat.status||'Not Started',
+        cat.plannedHours||0, +actual.toFixed(2), pct,
+        schedLabel,
+        entry.startDate||'',entry.endDate||'',
+        resources
+      ]);
+    });
+  });
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet([header,...dataRows]);
+  ws['!cols'] = [8,28,16,14,12,12,11,16,12,12,40].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb,'Category Details',ws);
+  const now=new Date();
+  XLSX.writeFile(wb,`CategoryDetails_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}.xlsx`);
+}
+
 async function cancelLeave(leaveId, memberName){
   const plan = leavePlans.find(l => l.id === leaveId);
   if (!plan) { showToast('Leave not found', 'danger'); return; }
@@ -5133,6 +5739,307 @@ async function cancelLeave(leaveId, memberName){
     console.error('cancelLeave', e);
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   TEAM EFFORT SUMMARY
+═══════════════════════════════════════════════════════════════ */
+
+let _teamEffortSessions = [];   // cached for the drill-down and Excel export
+let _teamEffortDrillMember = null;  // {m, sessions} for the current drill-down
+
+function _getEffortPeriods(){
+  const now  = new Date();
+  const yStr = n => n < 10 ? '0'+n : ''+n;
+  const toDS = d => `${d.getFullYear()}-${yStr(d.getMonth()+1)}-${yStr(d.getDate())}`;
+  const todayStr = toDS(now);
+
+  // Week: Monday → today
+  const dow = now.getDay();
+  const mon = new Date(now); mon.setDate(now.getDate() - (dow === 0 ? 6 : dow - 1));
+  const weekStart = toDS(mon);
+
+  // Month
+  const monthStart = `${now.getFullYear()}-${yStr(now.getMonth()+1)}-01`;
+  const monthLabel = now.toLocaleDateString('en-IN', {month:'long', year:'numeric'});
+
+  // Quarter
+  const q = Math.floor(now.getMonth() / 3);
+  const qStart = toDS(new Date(now.getFullYear(), q * 3, 1));
+  const qLabel = `Q${q+1} ${now.getFullYear()}`;
+
+  // Year
+  const yearStart = `${now.getFullYear()}-01-01`;
+  const yearLabel = `${now.getFullYear()}`;
+
+  return [
+    { key:'today',   label:'Today',        from: todayStr,   to: todayStr  },
+    { key:'week',    label:'This Week',     from: weekStart,  to: todayStr  },
+    { key:'month',   label: monthLabel,     from: monthStart, to: todayStr  },
+    { key:'quarter', label: qLabel,         from: qStart,     to: todayStr  },
+    { key:'year',    label: yearLabel,      from: yearStart,  to: todayStr  },
+  ];
+}
+
+async function renderTeamEffort(){
+  const tableEl  = document.getElementById('teamEffortTable');
+  const statusEl = document.getElementById('teamEffortStatus');
+  if (!tableEl) return;
+
+  if (!teamMembers.length){
+    tableEl.innerHTML = '<p class="text-muted text-center py-3">No team members configured. Add members in Settings → Team Members.</p>';
+    if (statusEl) statusEl.textContent = '0 members';
+    return;
+  }
+
+  if (statusEl) statusEl.textContent = 'Loading…';
+
+  // Fetch sessions for the full current year (broadest period needed)
+  const periods = _getEffortPeriods();
+  const yearFrom = periods.find(p => p.key === 'year').from;
+  const todayStr = periods.find(p => p.key === 'today').to;
+
+  let sessions = [];
+  try {
+    if (CONFIGURED && db) {
+      const snap = await db.collection('sessions')
+        .where('date', '>=', yearFrom)
+        .where('date', '<=', todayStr)
+        .get();
+      sessions = snap.docs.map(d => ({id: d.id, ...d.data()}));
+    } else {
+      sessions = S.sessions.filter(s => s.date >= yearFrom && s.date <= todayStr);
+    }
+  } catch(e){
+    console.warn('teamEffort fetch', e);
+  }
+
+  _teamEffortSessions = sessions;
+
+  // Build member → period → hours map
+  const memberHrs = {};   // memberId → {today, week, month, quarter, year}
+  teamMembers.forEach(m => {
+    memberHrs[m.id] = { today:0, week:0, month:0, quarter:0, year:0 };
+  });
+
+  sessions.forEach(s => {
+    const email = (s.userEmail||'').toLowerCase();
+    const m = teamMembers.find(x => (x.email||'').toLowerCase() === email);
+    if (!m) return;
+    const hrs = (s.duration||0) / 3600;
+    const d   = s.date || '';
+    periods.forEach(p => {
+      if (d >= p.from && d <= p.to) memberHrs[m.id][p.key] += hrs;
+    });
+  });
+
+  const fmtH = h => h > 0 ? h.toFixed(1)+'h' : '—';
+
+  // Build summary table
+  const headerCells = periods.map(p => `<th class="text-center" style="white-space:nowrap;font-size:.8rem">${p.label}</th>`).join('');
+  const rows = teamMembers.map(m => {
+    const row = memberHrs[m.id];
+    const totalYr = row.year;
+    const cells = periods.map(p => {
+      const h = row[p.key];
+      return `<td class="text-center" style="font-size:.85rem;font-weight:${h>0?'600':'400'};color:${h>0?'var(--primary)':'#bbb'}">${fmtH(h)}</td>`;
+    }).join('');
+    return `<tr style="cursor:pointer" onclick="openTeamEffortDrill('${m.id}')" title="Click for project breakdown">
+      <td style="font-size:.85rem">
+        <span class="fw-semibold">${esc(m.name)}</span>
+        ${m.email ? `<div style="font-size:.72rem;color:#aaa">${esc(m.email)}</div>` : ''}
+      </td>
+      ${cells}
+      <td class="text-center">
+        <button class="btn btn-outline-primary btn-sm py-0 px-1" onclick="event.stopPropagation();openTeamEffortDrill('${m.id}')" title="Project breakdown">
+          <i class="bi bi-box-arrow-up-right" style="font-size:.75rem"></i>
+        </button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  tableEl.innerHTML = `
+    <table class="table table-sm table-hover mb-0" style="min-width:550px">
+      <thead class="table-light">
+        <tr>
+          <th style="font-size:.8rem">Member</th>
+          ${headerCells}
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  const totalSessions = sessions.length;
+  if (statusEl) statusEl.textContent = `${teamMembers.length} members · ${totalSessions} sessions this year`;
+}
+
+function openTeamEffortDrill(memberId){
+  const m = teamMembers.find(x => x.id === memberId);
+  if (!m) return;
+
+  document.getElementById('drillMemberName').textContent = m.name;
+  const body = document.getElementById('teamEffortDrillBody');
+  body.innerHTML = '<p class="text-center text-muted py-3">Calculating…</p>';
+
+  // Filter sessions for this member
+  const email = (m.email||'').toLowerCase();
+  const mSessions = _teamEffortSessions.filter(s => (s.userEmail||'').toLowerCase() === email);
+  _teamEffortDrillMember = { m, sessions: mSessions };
+
+  const periods  = _getEffortPeriods();
+
+  // Aggregate by project × period
+  const projMap = {};  // projectId → {proj, periods: {key→hrs}, cats: {catName→hrs}}
+  mSessions.forEach(s => {
+    if (!projMap[s.projectId]) {
+      const proj = S.projects.find(p => p.id === s.projectId);
+      projMap[s.projectId] = { proj, hrs: {today:0,week:0,month:0,quarter:0,year:0}, cats: {} };
+    }
+    const hrs = (s.duration||0) / 3600;
+    const d   = s.date || '';
+    periods.forEach(p => { if (d >= p.from && d <= p.to) projMap[s.projectId].hrs[p.key] += hrs; });
+    const cat = s.category || 'General';
+    projMap[s.projectId].cats[cat] = (projMap[s.projectId].cats[cat]||0) + hrs;
+  });
+
+  const entries = Object.values(projMap).filter(e => e.hrs.year > 0)
+    .sort((a,b) => b.hrs.year - a.hrs.year);
+
+  if (!entries.length){
+    body.innerHTML = '<p class="text-center text-muted py-4">No sessions logged this year for this member.</p>';
+  } else {
+    const fmtH = h => h > 0 ? h.toFixed(1)+'h' : '—';
+    const headerCols = periods.map(p => `<th class="text-center" style="font-size:.8rem;white-space:nowrap">${p.label}</th>`).join('');
+
+    body.innerHTML = `
+      <table class="table table-sm table-bordered mb-0">
+        <thead class="table-light">
+          <tr>
+            <th style="font-size:.8rem">Project</th>
+            ${headerCols}
+            <th style="font-size:.8rem">Categories (YTD)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${entries.map(e => {
+            const proj = e.proj || {};
+            const catBadges = Object.entries(e.cats)
+              .sort((a,b)=>b[1]-a[1])
+              .map(([cat, ch]) => `<span class="badge me-1 mb-1" style="background:#eef0f5;color:#444;font-weight:500;font-size:.73rem">${esc(cat)}: ${ch.toFixed(1)}h</span>`)
+              .join('');
+            const cells = periods.map(p => {
+              const h = e.hrs[p.key];
+              return `<td class="text-center" style="font-size:.83rem;font-weight:${h>0?'600':'400'};color:${h>0?'var(--primary)':'#ccc'}">${fmtH(h)}</td>`;
+            }).join('');
+            return `<tr>
+              <td style="font-size:.83rem">
+                <span class="fw-semibold text-primary">${esc(proj.num||'—')}</span>
+                <span class="ms-1">${esc(proj.name||e.proj?.id||'Unknown')}</span>
+              </td>
+              ${cells}
+              <td style="font-size:.78rem">${catBadges||'—'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  (new bootstrap.Modal(document.getElementById('teamEffortDrillModal'))).show();
+}
+
+function downloadTeamEffortExcel(){
+  if (!_teamEffortSessions.length && !teamMembers.length){
+    showToast('No data to export', 'warning'); return;
+  }
+  const periods = _getEffortPeriods();
+  const XLSX = window.XLSX;
+  if (!XLSX){ showToast('Excel library not loaded', 'danger'); return; }
+
+  // Sheet 1: Summary
+  const summaryHeader = ['Member', 'Email', ...periods.map(p=>p.label)];
+  const summaryRows = teamMembers.map(m => {
+    const email = (m.email||'').toLowerCase();
+    const mSess = _teamEffortSessions.filter(s => (s.userEmail||'').toLowerCase() === email);
+    const hrs = {};
+    periods.forEach(p => { hrs[p.key] = 0; });
+    mSess.forEach(s => {
+      const h = (s.duration||0)/3600;
+      const d = s.date||'';
+      periods.forEach(p => { if(d>=p.from&&d<=p.to) hrs[p.key]+=h; });
+    });
+    return [m.name, m.email||'', ...periods.map(p => +hrs[p.key].toFixed(2))];
+  });
+
+  // Sheet 2: Detailed (session log by member)
+  const detailHeader = ['Member','Date','Project','Category','Hours','Notes'];
+  const detailRows = [];
+  teamMembers.forEach(m => {
+    const email = (m.email||'').toLowerCase();
+    _teamEffortSessions
+      .filter(s=>(s.userEmail||'').toLowerCase()===email)
+      .sort((a,b)=>a.date.localeCompare(b.date))
+      .forEach(s=>{
+        const proj = S.projects.find(p=>p.id===s.projectId);
+        detailRows.push([
+          m.name,
+          s.date||'',
+          proj ? (proj.num ? proj.num+' '+proj.name : proj.name) : s.projectId||'',
+          s.category||'',
+          +((s.duration||0)/3600).toFixed(2),
+          s.notes||''
+        ]);
+      });
+  });
+
+  const wb = XLSX.utils.book_new();
+  const ws1 = XLSX.utils.aoa_to_sheet([summaryHeader, ...summaryRows]);
+  const ws2 = XLSX.utils.aoa_to_sheet([detailHeader, ...detailRows]);
+  XLSX.utils.book_append_sheet(wb, ws1, 'Team Summary');
+  XLSX.utils.book_append_sheet(wb, ws2, 'Session Detail');
+
+  const now = new Date();
+  const fname = `TeamEffort_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}.xlsx`;
+  XLSX.writeFile(wb, fname);
+}
+
+function downloadMemberDrillExcel(){
+  if (!_teamEffortDrillMember){ showToast('No member selected','warning'); return; }
+  const XLSX = window.XLSX;
+  if (!XLSX){ showToast('Excel library not loaded','danger'); return; }
+  const {m, sessions} = _teamEffortDrillMember;
+  const header = ['Date','Project No','Project Name','Category','Hours','Notes'];
+  const rows = sessions
+    .sort((a,b)=>a.date.localeCompare(b.date))
+    .map(s=>{
+      const proj = S.projects.find(p=>p.id===s.projectId)||{};
+      return [s.date||'', proj.num||'', proj.name||s.projectId||'', s.category||'', +((s.duration||0)/3600).toFixed(2), s.notes||''];
+    });
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet([header,...rows]);
+  XLSX.utils.book_append_sheet(wb, ws, m.name.replace(/[\\/*?[\]]/g,'').slice(0,31));
+  const now = new Date();
+  XLSX.writeFile(wb, `Effort_${m.name.replace(/\s+/g,'_')}_${now.getFullYear()}.xlsx`);
+}
 </script>
+<!-- Team Effort Drill-down Modal -->
+<div class="modal fade" id="teamEffortDrillModal" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-person-lines-fill me-2"></i><span id="drillMemberName">Member</span> — Project Breakdown</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="teamEffortDrillBody">
+        <p class="text-muted text-center py-4">Loading…</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-success btn-sm" onclick="downloadMemberDrillExcel()">
+          <i class="bi bi-file-earmark-spreadsheet me-1"></i>Download Excel
+        </button>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
 </body>
 </html>
