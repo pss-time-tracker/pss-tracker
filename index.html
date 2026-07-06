@@ -483,14 +483,27 @@
 
       <!-- Team Members (visible to all, editable by admin) -->
       <div class="setting-section mt-3">
-        <h6><i class="bi bi-people me-1"></i>Team Members
-          <span class="badge ms-2" style="background:#e8eaf6;color:var(--primary);font-size:.7rem">Used in Schedule Planner</span>
-        </h6>
-        <div class="text-muted mb-2" style="font-size:.82rem">Member names used for per-person resource allocation in the Work Schedule Planner.</div>
-        <div id="teamMembersForm" class="row g-2"></div>
-        <button id="saveTeamBtn" onclick="saveTeamMembers()" class="btn btn-sm btn-primary mt-2" style="display:none">
-          <i class="bi bi-check-lg me-1"></i>Save Team Members
-        </button>
+        <div class="d-flex align-items-center justify-content-between mb-1 flex-wrap gap-2">
+          <div>
+            <h6 class="mb-0"><i class="bi bi-people me-1"></i>Team Members
+              <span id="teamCountBadge" class="badge ms-2" style="background:#e8eaf6;color:var(--primary);font-size:.7rem">0 members</span>
+            </h6>
+            <div class="text-muted mt-1" style="font-size:.82rem">Add as many members as you need. Only these members count for utilisation calculations.</div>
+          </div>
+          <div id="teamAdminControls" class="d-flex gap-2" style="display:none!important">
+            <button class="btn btn-outline-primary btn-sm" onclick="addTeamMemberRow()">
+              <i class="bi bi-plus-lg me-1"></i>Add Member
+            </button>
+            <button id="saveTeamBtn" onclick="saveTeamMembers()" class="btn btn-sm btn-primary">
+              <i class="bi bi-check-lg me-1"></i>Save Team
+            </button>
+          </div>
+        </div>
+        <div id="teamMembersForm" class="row g-2 mt-1"></div>
+        <div id="teamEmptyMsg" class="text-center text-muted py-3" style="font-size:.85rem;display:none">
+          <i class="bi bi-people me-1"></i>No team members yet.
+          <span id="teamEmptyAdmin"> Click <strong>Add Member</strong> to get started.</span>
+        </div>
       </div>
 
       <!-- Admin-only: Data Management -->
@@ -1244,15 +1257,9 @@ let unsubTeam       = null;
 let schedModal      = null;
 let schedCategoryRows    = []; // [{name, plannedHours}] — working state inside modal
 let schedAssignedMembers = []; // [{id, name, allocations:{catName:pct}}] — who is on THIS project
-const TEAM_SIZE     = 4;
 const WEEKLY_HRS    = 48;  // per member per week (8 hrs × 6 days)
 const DAILY_HRS     = 8;   // working hours per member per day
-let teamMembers = [
-  {id:'m1', name:'Member 1', email:''},
-  {id:'m2', name:'Member 2', email:''},
-  {id:'m3', name:'Member 3', email:''},
-  {id:'m4', name:'Member 4', email:''},
-];
+let teamMembers = [];  // loaded from Firestore — no hardcoded defaults
 
 // Bootstrap modal instances
 let projModal, sessModal, stopModal, editSessModal, addLeaveModal;
@@ -1417,11 +1424,9 @@ function setupListeners(){
     // (Projects tab removed — projects managed from Schedule tab)
   }, err => console.warn('schedule listener', err));
 
-  // Team members — real-time
+  // Team members — real-time (fully dynamic: use whatever is in Firestore, no fallback defaults)
   unsubTeam = db.collection('appSettings').doc('teamMembers').onSnapshot(snap => {
-    if (snap.exists && snap.data().members?.length) {
-      teamMembers = snap.data().members;
-    }
+    teamMembers = (snap.exists && Array.isArray(snap.data().members)) ? snap.data().members : [];
     if (!document.getElementById('page-settings').classList.contains('d-none')) {
       renderTeamMembersSettings();
     }
@@ -3057,35 +3062,115 @@ function populateProjectDropdowns(){
 
 /* Get schedule status for an entry given actual hours logged */
 /* ── TEAM MEMBERS SETTINGS ─────────────────────────────────────────── */
+let _tmRowCounter = 0; // unique key for dynamic rows
+
 function renderTeamMembersSettings(){
-  const form = document.getElementById('teamMembersForm');
-  const saveBtn = document.getElementById('saveTeamBtn');
+  const form     = document.getElementById('teamMembersForm');
+  const controls = document.getElementById('teamAdminControls');
+  const emptyMsg = document.getElementById('teamEmptyMsg');
+  const emptyAdmin = document.getElementById('teamEmptyAdmin');
+  const badge    = document.getElementById('teamCountBadge');
   if (!form) return;
   const admin = isAdmin();
-  form.innerHTML = teamMembers.map((m, i) => `
-    <div class="col-md-3 col-sm-6">
-      <label class="form-label" style="font-size:.8rem;color:#555;font-weight:600">Member ${i+1}</label>
+
+  // Show/hide admin controls
+  if (controls) controls.style.display = admin ? '' : 'none';
+  if (emptyAdmin) emptyAdmin.style.display = admin ? '' : 'none';
+
+  // Render rows
+  form.innerHTML = teamMembers.map((m, i) => _teamMemberRowHtml(m, i, admin)).join('');
+  _tmRowCounter  = teamMembers.length;
+
+  // Empty state
+  const isEmpty = teamMembers.length === 0;
+  if (emptyMsg) emptyMsg.style.display = isEmpty ? '' : 'none';
+  if (badge)    badge.textContent = `${teamMembers.length} member${teamMembers.length!==1?'s':''}`;
+}
+
+function _teamMemberRowHtml(m, i, admin){
+  const ro = admin ? '' : 'readonly';
+  return `
+    <div class="col-md-3 col-sm-6 team-member-row" data-rowkey="${m.id||'r'+i}">
+      <div class="d-flex align-items-center justify-content-between mb-1">
+        <label class="form-label mb-0" style="font-size:.8rem;color:#555;font-weight:600">Member ${i+1}</label>
+        ${admin ? `<button type="button" class="btn btn-link btn-sm p-0 text-danger"
+          onclick="removeTeamMemberRow(this)" title="Remove member">
+          <i class="bi bi-x-circle"></i></button>` : ''}
+      </div>
+      <input type="hidden" class="team-id-input" value="${esc(m.id||'')}">
       <input type="text" class="form-control form-control-sm team-name-input mb-1"
-        data-idx="${i}" value="${esc(m.name)}" placeholder="Name" ${admin ? '' : 'readonly'}>
+        value="${esc(m.name)}" placeholder="Full name" ${ro}>
       <input type="email" class="form-control form-control-sm team-email-input"
-        data-idx="${i}" value="${esc(m.email||'')}" placeholder="Email (for log matching)"
-        style="font-size:.78rem" ${admin ? '' : 'readonly'}>
-    </div>`).join('');
-  if (saveBtn) saveBtn.style.display = admin ? '' : 'none';
+        value="${esc(m.email||'')}" placeholder="Email (for log matching)"
+        style="font-size:.78rem" ${ro}>
+    </div>`;
+}
+
+function addTeamMemberRow(){
+  if (!isAdmin()) return;
+  const form  = document.getElementById('teamMembersForm');
+  const emptyMsg = document.getElementById('teamEmptyMsg');
+  const badge = document.getElementById('teamCountBadge');
+  _tmRowCounter++;
+  const idx = form.querySelectorAll('.team-member-row').length;
+  const div = document.createElement('div');
+  div.className = 'col-md-3 col-sm-6 team-member-row';
+  div.dataset.rowkey = 'new_' + _tmRowCounter;
+  div.innerHTML = `
+    <div class="d-flex align-items-center justify-content-between mb-1">
+      <label class="form-label mb-0" style="font-size:.8rem;color:#555;font-weight:600">Member ${idx+1}</label>
+      <button type="button" class="btn btn-link btn-sm p-0 text-danger"
+        onclick="removeTeamMemberRow(this)" title="Remove member">
+        <i class="bi bi-x-circle"></i></button>
+    </div>
+    <input type="hidden" class="team-id-input" value="m_${Date.now()}_${_tmRowCounter}">
+    <input type="text" class="form-control form-control-sm team-name-input mb-1" placeholder="Full name">
+    <input type="email" class="form-control form-control-sm team-email-input"
+      placeholder="Email (for log matching)" style="font-size:.78rem">`;
+  form.appendChild(div);
+  if (emptyMsg) emptyMsg.style.display = 'none';
+  // Update count badge
+  const newCount = form.querySelectorAll('.team-member-row').length;
+  if (badge) badge.textContent = `${newCount} member${newCount!==1?'s':''}`;
+  div.querySelector('.team-name-input').focus();
+}
+
+function removeTeamMemberRow(btn){
+  if (!isAdmin()) return;
+  const row   = btn.closest('.team-member-row');
+  const name  = row.querySelector('.team-name-input')?.value?.trim() || 'this member';
+  if (!confirm(`Remove "${name}" from the team?`)) return;
+  row.remove();
+  // Renumber remaining labels
+  const form = document.getElementById('teamMembersForm');
+  form.querySelectorAll('.team-member-row').forEach((r, i) => {
+    const lbl = r.querySelector('label');
+    if (lbl) lbl.textContent = `Member ${i+1}`;
+  });
+  const newCount = form.querySelectorAll('.team-member-row').length;
+  const badge    = document.getElementById('teamCountBadge');
+  const emptyMsg = document.getElementById('teamEmptyMsg');
+  if (badge)    badge.textContent = `${newCount} member${newCount!==1?'s':''}`;
+  if (emptyMsg) emptyMsg.style.display = newCount === 0 ? '' : 'none';
 }
 
 async function saveTeamMembers(){
-  const nameInputs  = document.querySelectorAll('.team-name-input');
-  const emailInputs = document.querySelectorAll('.team-email-input');
-  const members = teamMembers.map((m, i) => ({
-    ...m,
-    name:  (nameInputs[i]?.value||'').trim()  || m.name,
-    email: (emailInputs[i]?.value||'').trim().toLowerCase(),
-  }));
+  if (!isAdmin()){ showToast('Admin only', 'danger'); return; }
+  const rows = document.querySelectorAll('.team-member-row');
+  const members = [];
+  rows.forEach(row => {
+    const id    = row.querySelector('.team-id-input')?.value?.trim();
+    const name  = row.querySelector('.team-name-input')?.value?.trim();
+    const email = (row.querySelector('.team-email-input')?.value||'').trim().toLowerCase();
+    if (name) members.push({ id: id || 'm_' + Date.now() + '_' + Math.random().toString(36).slice(2), name, email });
+  });
+  if (!members.length && !confirm('Save with no team members? Utilisation will be 0%.')) return;
   try {
     await db.collection('appSettings').doc('teamMembers').set({ members });
     teamMembers = members;
-    showToast('Team members saved ✓', 'success');
+    const badge = document.getElementById('teamCountBadge');
+    if (badge) badge.textContent = `${members.length} member${members.length!==1?'s':''}`;
+    showToast(`Team saved — ${members.length} member${members.length!==1?'s':''}`, 'success');
   } catch(e){
     showToast('Save failed: '+e.message, 'danger');
   }
@@ -4324,8 +4409,8 @@ async function saveSchedule(){
     simulationHours : schedCategoryRows.find(c=>c.name==='Simulation')?.plannedHours || 0,
     modellingHours  : schedCategoryRows.find(c=>c.name==='Modelling')?.plannedHours  || 0,
     resources       : resources,
-    simulationPct   : Math.round(totalSimPct / TEAM_SIZE),
-    modellingPct    : Math.round(totalModPct / TEAM_SIZE),
+    simulationPct   : teamMembers.length ? Math.round(totalSimPct / teamMembers.length) : 0,
+    modellingPct    : teamMembers.length ? Math.round(totalModPct / teamMembers.length) : 0,
     startDate       : startVal,
     endDate         : document.getElementById('schedEnd').value || null,
     updatedAt       : firebase.firestore.FieldValue.serverTimestamp()
