@@ -534,6 +534,16 @@
           <div class="text-muted mt-1" style="font-size:.8rem">Downloads a CSV of all sessions for all users in the chosen period.</div>
         </div>
 
+        <div class="mb-4">
+          <div class="fw-semibold mb-2" style="color:#b71c1c">Database Cleanup</div>
+          <div class="text-muted mb-2" style="font-size:.82rem">
+            If you deleted schedule entries but the dashboard still shows stale portfolio value or project counts, there may be orphaned project records in the database. Run this to find and remove them.
+          </div>
+          <button class="btn btn-outline-danger btn-sm" onclick="purgeOrphanedProjects()">
+            <i class="bi bi-database-x me-1"></i>Find &amp; Delete Orphaned Projects
+          </button>
+        </div>
+
         <div>
           <div class="fw-semibold text-danger mb-2">Danger Zone — Clear Session Logs</div>
           <div class="d-flex flex-wrap gap-2 mb-2">
@@ -4939,13 +4949,37 @@ function renderResourceDailySchedule(){
 /* Delete a schedule entry */
 async function deleteSchedule(id){
   if (!isAdmin()){ showToast('Admin only', 'danger'); return; }
-  if (!confirm('Remove this project from the schedule?')) return;
+  const entry = scheduleEntries.find(e => e.id === id);
+  const proj  = entry ? S.projects.find(p => p.id === entry.projectId) : null;
+  const label = proj ? `${proj.num ? proj.num+' — ' : ''}${proj.name}` : 'this project';
+  if (!confirm(`Remove "${label}" from the schedule and delete the project?\n\nThis will also remove the project record (including its value). Sessions logged against it will remain.`)) return;
   try {
-    await db.collection('schedules').doc(id).delete();
-    showToast('Schedule entry removed', 'success');
+    const batch = db.batch();
+    batch.delete(db.collection('schedules').doc(id));
+    if (entry?.projectId) batch.delete(db.collection('projects').doc(entry.projectId));
+    await batch.commit();
+    showToast('Project and schedule entry deleted', 'success');
   } catch(e){
     showToast('Delete failed: '+e.message, 'danger');
     console.error('deleteSchedule', e);
+  }
+}
+
+/* One-time: purge orphaned project docs that have no matching schedule entry */
+async function purgeOrphanedProjects(){
+  if (!isAdmin()){ showToast('Admin only', 'danger'); return; }
+  if (!CONFIGURED || !db){ showToast('Firebase not connected', 'warning'); return; }
+  const schedProjIds = new Set(scheduleEntries.map(e => e.projectId));
+  const orphans = S.projects.filter(p => !schedProjIds.has(p.id));
+  if (!orphans.length){ showToast('No orphaned projects found', 'success'); return; }
+  if (!confirm(`Found ${orphans.length} project record${orphans.length!==1?'s':''} with no schedule entry:\n\n${orphans.map(p=>(p.num?p.num+' ':'')+(p.name||p.id)).join('\n')}\n\nDelete these permanently?`)) return;
+  try {
+    const batch = db.batch();
+    orphans.forEach(p => batch.delete(db.collection('projects').doc(p.id)));
+    await batch.commit();
+    showToast(`${orphans.length} orphaned project${orphans.length!==1?'s':''} deleted`, 'success');
+  } catch(e){
+    showToast('Cleanup failed: '+e.message, 'danger');
   }
 }
 
