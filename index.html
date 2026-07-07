@@ -3699,9 +3699,15 @@ async function openCatStatusEditor(schedId, catName){
   const opts = ['Not Started','In Progress','Completed','On Hold','Cancelled'];
   const newStatus = opts[(opts.indexOf(curStatus) + 1) % opts.length];
   if (!confirm(`Change "${catName}" status from "${curStatus}" → "${newStatus}"?`)) return;
-  const updatedCats = (entry.categories||[]).map(c =>
-    c.name === catName ? {...c, status: newStatus} : c
-  );
+  const todayDS = new Date().toLocaleDateString('en-CA');
+  const updatedCats = (entry.categories||[]).map(c => {
+    if (c.name !== catName) return c;
+    const updated = {...c, status: newStatus};
+    // Record actual completion date so subsequent categories can start from here
+    if (newStatus === 'Completed' && !c.completedDate) updated.completedDate = todayDS;
+    if (newStatus !== 'Completed') delete updated.completedDate; // reset if status changes away
+    return updated;
+  });
   try {
     await db.collection('schedules').doc(schedId).update({categories: updatedCats});
     showToast(`${catName} → ${newStatus}`, 'success');
@@ -3988,6 +3994,39 @@ function catDailyCapacity(resources, catName){
   }, 0);
 }
 
+/* Sum planned hours for a resource across all sequential categories active in [fromDS, toDS].
+   Iterates every calendar day in the range, skips weekends and approved leaves. */
+function computeResPlannedHrs(resourceRow, seqDates, fromDS, toDS){
+  let total = 0;
+  const cur = new Date(fromDS + 'T00:00:00');
+  const end = new Date(toDS   + 'T00:00:00');
+  while (cur <= end){
+    const dow = cur.getDay();
+    if (dow !== 0 && dow !== 6){          // skip weekends
+      const ds = cur.toLocaleDateString('en-CA');
+      const onLeave = leavePlans.some(l =>
+        l.memberId === resourceRow.id && l.status === 'approved' &&
+        ds >= l.fromDate && ds <= l.toDate
+      );
+      if (!onLeave){
+        const hit = seqDates.find(sd =>
+          sd.catStatus !== 'Completed' && sd.catStatus !== 'Cancelled' &&
+          sd.startStr <= ds && sd.endStr >= ds
+        );
+        if (hit){
+          const allocs = resourceRow.allocations || {};
+          const pct = Object.keys(allocs).length > 0
+            ? (allocs[hit.name] || 0)
+            : (resourceRow.simPct||0) + (resourceRow.modPct||0);
+          total += pct / 100 * DAILY_HRS;
+        }
+      }
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+  return total;
+}
+
 function getSchedStatus(entry, actualHrs){
   const totalHrs = entry.categories?.length
     ? entry.categories.reduce((s,c)=>s+c.plannedHours,0)
@@ -4073,8 +4112,10 @@ async function calcSuggestedEnd(){
   // Build adjusted category rows: remaining = planned − already logged
   // calcCatSequentialDates will handle per-category leave filtering internally
   const adjustedCats = schedCategoryRows.map(c => {
-    const actual = catActual[c.name] || 0;
-    const rem    = Math.max(0, c.plannedHours - actual);
+    const actual  = catActual[c.name] || 0;
+    const isDoneC = c.status === 'Completed' || c.status === 'Cancelled';
+    // Completed/Cancelled → 0 remaining so calcCatSequentialDates uses completedDate for end
+    const rem     = isDoneC ? 0 : Math.max(0, c.plannedHours - actual);
     return { ...c, _planned: c.plannedHours, _actual: actual, plannedHours: rem };
   });
 
@@ -4103,19 +4144,52 @@ async function calcSuggestedEnd(){
 
   const fmtDate = ds => new Date(ds).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
 
+  // Check for early/late completion vs original project end date
+  const origEnd      = existingEntry2?.endDate || null;
+  const completedCats = seqDates.filter(sd => sd.catStatus === 'Completed');
+  const earlyBannerHtml = (() => {
+    if (!origEnd || !completedCats.length) return '';
+    // Count working days difference between new end and original end
+    const origD = new Date(origEnd + 'T00:00:00');
+    const newD   = new Date(lastEnd + 'T00:00:00');
+    if (newD >= origD) return ''; // no improvement
+    // Count working days saved
+    let saved = 0;
+    const cur = new Date(newD); cur.setDate(cur.getDate()+1);
+    while (cur <= origD){ if (cur.getDay()!==0 && cur.getDay()!==6) saved++; cur.setDate(cur.getDate()+1); }
+    const catNames = completedCats.map(c=>esc(c.name)).join(', ');
+    return `
+      <div class="d-flex align-items-start gap-2 p-2 mb-2"
+           style="background:#e8f5e9;border-radius:8px;border-left:3px solid #2e7d32;font-size:.82rem">
+        <i class="bi bi-patch-check-fill mt-1" style="color:#2e7d32;flex-shrink:0"></i>
+        <div>
+          <strong style="color:#1b5e20">Ahead of schedule!</strong>
+          <span class="ms-1">${catNames} completed early — saving <strong>${saved} working day${saved!==1?'s':''}</strong>.</span>
+          <br>
+          <span style="color:#2e7d32">Original end: <strong>${fmtDate(origEnd)}</strong></span>
+          <span class="mx-2">→</span>
+          <span style="color:#1b5e20">Revised end: <strong>${fmtDate(lastEnd)}</strong></span>
+          <span class="ms-2 text-muted">(Click Save to update the project)</span>
+        </div>
+      </div>`;
+  })();
+
   const box = document.getElementById('schedSuggestion');
   box.classList.remove('d-none');
   box.innerHTML = `
+    ${earlyBannerHtml}
     <div class="fw-semibold mb-2"><i class="bi bi-lightbulb me-1"></i>Sequential Category Schedule
       <span class="text-muted fw-normal" style="font-size:.8rem"> — each category must complete before the next begins</span>
     </div>
     <div class="d-flex flex-column gap-1">
       ${seqDates.map((d,i)=>`
-        <div style="padding:.4rem .6rem;background:${i%2===0?'#f8f9ff':'#fff'};border-radius:6px;border-left:3px solid var(--pl)">
+        <div style="padding:.4rem .6rem;background:${d.catStatus==='Completed'?'#f1f8e9':d.catStatus==='Cancelled'?'#fafafa':i%2===0?'#f8f9ff':'#fff'};border-radius:6px;border-left:3px solid ${d.catStatus==='Completed'?'#66bb6a':d.catStatus==='Cancelled'?'#bdbdbd':'var(--pl)'}">
           <div class="d-flex justify-content-between flex-wrap gap-1">
             <div>
               <span class="badge me-1" style="background:#e8eaf6;color:var(--primary);font-size:.75rem">${i+1}</span>
               <strong>${esc(d.name)}</strong>
+              ${d.catStatus==='Completed' ? '<span class="badge ms-1" style="background:#e8f5e9;color:#2e7d32;font-size:.7rem">✅ Completed</span>' : ''}
+              ${d.catStatus==='Cancelled' ? '<span class="badge ms-1" style="background:#f5f5f5;color:#757575;font-size:.7rem">Cancelled</span>' : ''}
               <span class="text-muted ms-1" style="font-size:.78rem">${d.planned}h planned${d.actual>0?` · ${d.actual.toFixed(1)}h logged`:''}</span>
             </div>
             <div style="font-size:.8rem;color:#555">
@@ -4398,15 +4472,9 @@ async function renderSchedule(){
     // ── Pre-compute sequential dates (needed for both bandwidth calc and card rendering) ──
     const _startDS  = entry.startDate || new Date().toLocaleDateString('en-CA');
     const _seqDates = cats.length ? calcCatSequentialDates(cats, resources, _startDS, leavePlans) : [];
-    // Which category is active TODAY? (sequential — only one runs at a time)
-    const _todayDS  = new Date().toLocaleDateString('en-CA');
-    const _activeCatName = (() => {
-      if (!_seqDates.length) return null;
-      const hit = _seqDates.find(sd => sd.startStr <= _todayDS && sd.endStr >= _todayDS);
-      if (hit) return hit.name;
-      if (_todayDS < _seqDates[0].startStr) return _seqDates[0].name; // project hasn't started
-      return null; // all categories completed
-    })();
+    // Which category is active TODAY? (sequential — overdue cats stay active until marked Completed)
+    const _todayDS       = new Date().toLocaleDateString('en-CA');
+    const _activeCatName = getActiveCatFromSeqDates(_seqDates, _todayDS);
 
     // Only count active entries in summary cards
     if (!isInactive){
@@ -4491,19 +4559,61 @@ async function renderSchedule(){
       const stColor  = _catStatusColor[catSt] || '#444';
       const stBg     = _catStatusBg[catSt] || '#eef0f5';
       const stDot    = {'Not Started':'⬜','In Progress':'🔵','Completed':'✅','On Hold':'⏸','Cancelled':'⛔'}[catSt]||'';
+
+      // Visual states: overdue = red border/bg; blocked = orange border/bg
+      const borderCol = sd.isOverdue ? 'var(--danger)' : sd.isBlocked ? '#e65100' : stColor;
+      const cardBg    = sd.isOverdue ? '#fff5f5'       : sd.isBlocked ? '#fff8ee' : '#f3f4fb';
+
+      // Overdue inline badge (past due, not completed)
+      const overdueTag = sd.isOverdue
+        ? `<span style="font-size:.63rem;background:#fde8e8;color:var(--danger);border-radius:4px;padding:.06rem .28rem;margin-left:.2rem;font-weight:700;white-space:nowrap">
+             ⚠ Was due ${fmtDS(sd.plannedEndStr)} — mark Completed
+           </span>`
+        : '';
+
+      // Blocked inline badge — show which category is blocking
+      const prevCat = i > 0 ? _seqDates[i-1].name : '';
+      const blockedTag = sd.isBlocked
+        ? `<span style="font-size:.63rem;background:#fff3e0;color:#b35000;border-radius:4px;padding:.06rem .28rem;margin-left:.2rem;font-weight:700;white-space:nowrap">
+             ⏳ Pending ${esc(prevCat)}
+           </span>`
+        : '';
+
+      // Dates: hide for blocked (provisional until predecessor completes)
+      const datesSpan = !sd.isBlocked && sd.days > 0
+        ? `<span class="text-muted ms-1" style="font-size:.73rem">· ${fmtDS(sd.startStr)}→${fmtDS(sd.endStr)}</span>`
+        : '';
+
       return `
-      <div class="d-inline-flex align-items-center me-3 mb-1"
-           style="background:#f3f4fb;border-radius:6px;padding:.2rem .5rem;border-left:3px solid ${stColor}">
+      <div class="d-inline-flex align-items-center me-3 mb-1 flex-wrap"
+           style="background:${cardBg};border-radius:6px;padding:.2rem .5rem;border-left:3px solid ${borderCol}">
         <span class="badge me-1" style="background:#e8eaf6;color:var(--primary);font-size:.68rem;padding:.15rem .35rem">${i+1}</span>
         <span class="fw-semibold me-1">${esc(sd.name)}</span>
         <span style="background:${stBg};color:${stColor};font-size:.68rem;padding:.1rem .3rem;border-radius:4px;font-weight:600;margin-right:.25rem">${stDot} ${catSt}</span>
         <span class="text-primary me-1" style="font-weight:600">${sd.planned}h</span>
         <span class="text-muted" style="font-size:.73rem">${catDailyCapacity(resources,sd.name).toFixed(1)}h/day</span>
-        ${sd.days > 0 ? `<span class="text-muted ms-1" style="font-size:.73rem">· ${fmtDS(sd.startStr)}→${fmtDS(sd.endStr)}</span>` : ''}
-        ${sd.hasLeaveImpact ? `<span style="color:#e65100;font-size:.68rem;margin-left:.3rem" title="Leave days of assigned resources excluded">✈</span>` : ''}
+        ${datesSpan}
+        ${sd.hasLeaveImpact && !sd.isBlocked ? `<span style="color:#e65100;font-size:.68rem;margin-left:.3rem" title="Leave days of assigned resources excluded">✈</span>` : ''}
+        ${overdueTag}${blockedTag}
         ${isAdmin() ? `<button class="btn p-0 ms-1" style="font-size:.65rem;opacity:.6;line-height:1" title="Change status" onclick="openCatStatusEditor('${entry.id}','${esc(catObj.name||sd.name)}')"><i class="bi bi-pencil-square"></i></button>` : ''}
       </div>`;
     }).join('');
+
+    // Project-level overdue warning banner
+    const _overdueItems = _seqDates.filter(sd => sd.isOverdue);
+    const overdueWarningHtml = _overdueItems.length && !isInactive ? `
+      <div class="d-flex align-items-start gap-2 mt-1 px-2 py-1"
+           style="background:#fde8e8;border-radius:6px;border-left:3px solid var(--danger);font-size:.78rem">
+        <i class="bi bi-exclamation-circle-fill mt-1" style="color:var(--danger);flex-shrink:0"></i>
+        <span style="flex:1">
+          <strong>${_overdueItems.map(sd=>esc(sd.name)).join(', ')}</strong> behind schedule —
+          ${_overdueItems.length===1?'was':'were'} due
+          <strong>${_overdueItems.map(sd=>fmtDS(sd.plannedEndStr)).join(', ')}</strong>.
+          Mark as <em>Completed</em> to unblock subsequent categories and recalculate the project end date.
+        </span>
+        ${isAdmin() ? `<button class="btn btn-outline-danger btn-sm py-0 px-2 ms-1" style="font-size:.72rem;white-space:nowrap;flex-shrink:0"
+          onclick="openCatStatusEditor('${entry.id}','${esc(_overdueItems[0].name)}')"><i class="bi bi-check-lg me-1"></i>Mark Done</button>` : ''}
+      </div>` : '';
 
     const endDriftHtml = (_endDrift && !isInactive) ? `
       <div class="d-flex align-items-center gap-2 mt-1 px-2 py-1"
@@ -4534,6 +4644,7 @@ async function renderSchedule(){
           </div>
           ${notesHtml}
           ${endDriftHtml}
+          ${overdueWarningHtml}
           <div style="font-size:.8rem;color:#666" class="mb-2 mt-1">
             ${catsHtml}
           </div>
@@ -4551,12 +4662,23 @@ async function renderSchedule(){
                 const m = mEmail ? ((memberActualMap[entry.projectId]||{})[mEmail]||{}) : null;
                 const empty = {total:0,todayTotal:0,weeklyTotal:0,monthlyTotal:0};
                 const md = m || empty;
-                const totalAllocPct = Object.keys(r.allocations||{}).length
-                  ? Object.values(r.allocations).reduce((s,v)=>s+v,0)
+                // Sequential categories: today uses active cat; week/month sum across all cats active in period
+                const _rAllocs = r.allocations || {};
+                const _todayAllocPct = Object.keys(_rAllocs).length > 0
+                  ? (_activeCatName ? (_rAllocs[_activeCatName] || 0) : 0)
                   : (r.simPct||0)+(r.modPct||0);
-                const planDay   = totalAllocPct/100*DAILY_HRS;
-                const planWeek  = planDay * 6;
-                const planMonth = planDay * 26;
+                const planDay = _todayAllocPct / 100 * DAILY_HRS;
+
+                // Date ranges for this week (Mon→Sun) and this month
+                const _now   = new Date();
+                const _dow   = _now.getDay();
+                const _wkMon = new Date(_now); _wkMon.setDate(_now.getDate() - (_dow===0?6:_dow-1));
+                const _wkSun = new Date(_wkMon); _wkSun.setDate(_wkMon.getDate()+6);
+                const _mo1   = new Date(_now.getFullYear(), _now.getMonth(), 1);
+                const _moEnd = new Date(_now.getFullYear(), _now.getMonth()+1, 0);
+                const toDS2  = d => d.toLocaleDateString('en-CA');
+                const planWeek  = computeResPlannedHrs(r, _seqDates, toDS2(_wkMon), toDS2(_wkSun));
+                const planMonth = computeResPlannedHrs(r, _seqDates, toDS2(_mo1),   toDS2(_moEnd));
 
                 const periods = [
                   {label:'Today',      logged: md.todayTotal||0,   plan: planDay},
@@ -4566,17 +4688,22 @@ async function renderSchedule(){
 
                 const si = (logged, plan) => {
                   if (!mEmail) return '<span style="color:#aaa">—</span>';
-                  if (logged === 0 && plan > 0) return '<span style="color:#aaa">⬜ None</span>';
-                  const p = plan > 0 ? logged/plan : 1;
+                  if (plan === 0) return '<span style="color:#aaa">—</span>';
+                  if (logged === 0) return '<span style="color:#aaa">⬜ None</span>';
+                  const p = logged/plan;
                   return p >= 1 ? '<span style="color:#2e7d32">✅ On target</span>'
                     : p >= 0.5  ? '<span style="color:#e65100">🟡 Behind</span>'
                                 : '<span style="color:#c62828">🔴 Well behind</span>';
                 };
 
-                // Build allocation summary string
-                const allocSummary = Object.keys(r.allocations||{}).length
-                  ? Object.entries(r.allocations).filter(([,v])=>v>0).map(([k,v])=>`${v}% ${k}`).join(' · ')
+                // Show ALL category allocations (context across project lifetime)
+                const allocSummary = Object.keys(_rAllocs).length > 0
+                  ? Object.entries(_rAllocs).filter(([,v])=>v>0).map(([k,v])=>`${v}% ${k}`).join(' · ') || 'No allocation set'
                   : `${(r.simPct||0)}% Sim · ${(r.modPct||0)}% Mod`;
+                // Active category note
+                const activeCatNote = _activeCatName
+                  ? `<span style="font-size:.68rem;color:#1565c0;font-weight:600"> · Active: ${esc(_activeCatName)}</span>`
+                  : `<span style="font-size:.68rem;color:#aaa"> · No active cat today</span>`;
 
                 const pRows = periods.map(p=>`
                   <tr>
@@ -4588,8 +4715,13 @@ async function renderSchedule(){
 
                 return `<div style="border:1px solid #e0e3ef;border-radius:9px;padding:.55rem .75rem;min-width:210px;flex:1;background:#fafbff">
                   <div class="fw-semibold" style="font-size:.82rem">${esc(r.name)}</div>
-                  <div style="font-size:.71rem;color:#888;margin-bottom:.3rem">
-                    ${planDay.toFixed(1)}h/day &nbsp;·&nbsp; ${allocSummary}
+                  <div style="font-size:.71rem;color:#888;margin-bottom:.15rem">
+                    ${allocSummary}${activeCatNote}
+                  </div>
+                  <div style="font-size:.7rem;color:#555;margin-bottom:.3rem">
+                    Today: <strong>${planDay.toFixed(1)}h</strong> &nbsp;·&nbsp;
+                    Week: <strong>${planWeek.toFixed(1)}h</strong> &nbsp;·&nbsp;
+                    Month: <strong>${planMonth.toFixed(1)}h</strong>
                   </div>
                   <table style="width:100%;border-collapse:collapse">
                     <tr style="background:#eef0f8">
@@ -4839,7 +4971,7 @@ function openEditSchedule(id){
 
   // Load categories (new format) or build from legacy sim/mod hours
   if (entry.categories && entry.categories.length) {
-    schedCategoryRows = entry.categories.map(c => ({name: c.name, plannedHours: c.plannedHours, status: c.status||'Not Started'}));
+    schedCategoryRows = entry.categories.map(c => ({name: c.name, plannedHours: c.plannedHours, status: c.status||'Not Started', completedDate: c.completedDate||null}));
   } else {
     schedCategoryRows = [];
     if (entry.simulationHours > 0) schedCategoryRows.push({name:'Simulation', plannedHours: entry.simulationHours});
@@ -4996,13 +5128,26 @@ function renderResourceDailySchedule(){
 
   if (!active.length){ div.innerHTML = ''; return; }
 
-  // Per team member, compute daily hours on each project
+  // Pre-compute active category per entry for today (sequential — one at a time)
+  const todayDStr = new Date().toLocaleDateString('en-CA');
+  const activeEntryMeta = active.map(e => {
+    const eCats  = e.categories?.length ? e.categories : [];
+    const eRes   = e.resources || [];
+    const eStart = e.startDate || todayDStr;
+    const eSeq    = eCats.length ? calcCatSequentialDates(eCats, eRes, eStart, leavePlans) : [];
+    const activeCat = getActiveCatFromSeqDates(eSeq, todayDStr);
+    return { entry: e, activeCat };
+  });
+
+  // Per team member, compute daily hours on each project (active category only)
   const memberRows = teamMembers.map(tm => {
-    const cells = active.map(e => {
+    const cells = activeEntryMeta.map(({ entry: e, activeCat }) => {
       const r = (e.resources||[]).find(r => r.id === tm.id);
       if (!r) return { hrs:0, pct:0 };
-      const pct = Object.values(r.allocations||{}).reduce((s,v)=>s+v,0)
-               || (r.simPct||0)+(r.modPct||0);
+      const allocs = r.allocations || {};
+      const pct = Object.keys(allocs).length > 0
+        ? (activeCat ? (allocs[activeCat] || 0) : 0)
+        : (r.simPct||0)+(r.modPct||0);
       return { hrs: pct/100*DAILY_HRS, pct };
     });
     const totalHrs = cells.reduce((s,c)=>s+c.hrs,0);
@@ -5258,6 +5403,9 @@ function calcCatSequentialDates(cats, resources, startDateStr, leavePlansArr = [
   // Advance past initial weekends only (first category handles its own leaves)
   while (current.getDay() === 0 || current.getDay() === 6) current.setDate(current.getDate()+1);
 
+  const todayStr2 = new Date().toLocaleDateString('en-CA');
+  let hasOverduePredecessor = false; // tracks if any prior category is overdue/incomplete
+
   cats.forEach(c => {
     const myResIds = resIdsForCat(c.name);
     const myLeaves = leaveDatesFor(myResIds);          // only resources in THIS category
@@ -5273,13 +5421,33 @@ function calcCatSequentialDates(cats, resources, startDateStr, leavePlansArr = [
       catEnd = new Date(catStart);
     }
 
+    const catStartStr   = catStart.toLocaleDateString('en-CA');
+    const plannedEndStr = catEnd.toLocaleDateString('en-CA');
+    const catStatus     = c.status || 'Not Started';
+
+    // For Completed categories: use actual completedDate if it differs from planned end
+    let actualEndDate = catEnd;
+    let actualEndStr  = plannedEndStr;
+    if (catStatus === 'Completed' && c.completedDate) {
+      actualEndDate = new Date(c.completedDate + 'T00:00:00');
+      actualEndStr  = c.completedDate;
+    }
+
+    // Overdue = not completed/cancelled, and planned end date has already passed
+    const isOverdue = (catStatus === 'In Progress' || catStatus === 'Not Started' || catStatus === 'On Hold')
+      && plannedEndStr < todayStr2;
+
     result.push({
       name           : c.name,
       planned        : c.plannedHours,
       cap,
       days,
-      startStr       : catStart.toLocaleDateString('en-CA'),
-      endStr         : catEnd.toLocaleDateString('en-CA'),
+      startStr       : catStartStr,
+      endStr         : actualEndStr,
+      plannedEndStr  : plannedEndStr,
+      catStatus      : catStatus,
+      isOverdue      : isOverdue,
+      isBlocked      : hasOverduePredecessor,   // waiting for an earlier category to complete
       reason         : cap > 0
         ? `${c.plannedHours}h ÷ ${cap.toFixed(1)}h/day = ${days} working day${days!==1?'s':''}`
         : `${c.plannedHours}h planned — no capacity set`,
@@ -5287,17 +5455,45 @@ function calcCatSequentialDates(cats, resources, startDateStr, leavePlansArr = [
       myResIds
     });
 
-    // Transition: next category starts the working day after this one ends.
+    // An overdue category blocks all subsequent ones
+    if (isOverdue) hasOverduePredecessor = true;
+
+    // Transition: use actualEndDate so late completions push subsequent starts forward.
     // Only skip weekends in the gap — next category will handle its own leaves.
     if (days > 0){
-      current = addWorkingDays(catEnd, 1, []);   // [] = weekends only
+      current = addWorkingDays(actualEndDate, 1, []);   // [] = weekends only
     } else {
-      current = new Date(catEnd);
+      current = new Date(actualEndDate);
       current.setDate(current.getDate()+1);
       while (current.getDay()===0 || current.getDay()===6) current.setDate(current.getDate()+1);
     }
   });
   return result;
+}
+
+/* Determine the currently "active" sequential category for a project, given pre-computed seqDates.
+   Rules:
+   1. If any category is overdue (not Completed, past its planned end) → it remains active
+      (resources are still working on it; subsequent categories are blocked).
+   2. Otherwise find the category whose date range includes today.
+   3. If project hasn't started yet → first category.
+   4. If all categories are done → null. */
+function getActiveCatFromSeqDates(seqDates, todayDS){
+  if (!seqDates.length) return null;
+  const isDone = sd => sd.catStatus === 'Completed' || sd.catStatus === 'Cancelled';
+  // Rule 1: overdue category stays active (never completed/cancelled — isOverdue already excludes those)
+  const overdue = seqDates.find(sd => sd.isOverdue);
+  if (overdue) return overdue.name;
+  // Rule 2: first non-done category whose range includes today
+  const hit = seqDates.find(sd => !isDone(sd) && sd.startStr <= todayDS && sd.endStr >= todayDS);
+  if (hit) return hit.name;
+  // Rule 3: find first non-done upcoming category (handles gap between completed cat and next start)
+  const upcoming = seqDates.find(sd => !isDone(sd) && sd.startStr > todayDS);
+  if (upcoming) return upcoming.name;
+  // Rule 4: project hasn't started at all
+  if (todayDS < seqDates[0].startStr) return seqDates[0].name;
+  // Rule 5: all done / nothing left
+  return null;
 }
 
 /* Approved leave weekday dates for a list of member IDs (uses global leavePlans) */
@@ -5340,13 +5536,7 @@ function renderTeamBandwidth(){
     // Sequential dates → determine which single category is active today
     const eSeq    = eCats.length ? calcCatSequentialDates(eCats, eRes, eStart, leavePlans) : [];
     const todayStr= new Date().toLocaleDateString('en-CA');
-    const activeCat = (() => {
-      if (!eSeq.length) return null;
-      const hit = eSeq.find(sd => sd.startStr <= todayStr && sd.endStr >= todayStr);
-      if (hit) return hit.name;
-      if (todayStr < eSeq[0].startStr) return eSeq[0].name; // not yet started — use first
-      return null; // all done
-    })();
+    const activeCat = getActiveCatFromSeqDates(eSeq, todayStr);
     eRes.forEach(r => {
       if (!memberOccupied.hasOwnProperty(r.id)) return;
       const allocs = r.allocations || {};
@@ -6265,7 +6455,10 @@ function renderResourceCalendar(){
     if (isWeekend) return;
     entryMeta.forEach(({seq,res,proj})=>{
       if (!seq.length) return;
-      const hit = seq.find(sd=>sd.startStr<=dateStr&&sd.endStr>=dateStr);
+      const hit = seq.find(sd=>
+        sd.catStatus!=='Completed' && sd.catStatus!=='Cancelled' &&
+        sd.startStr<=dateStr && sd.endStr>=dateStr
+      );
       if (!hit) return;
       res.forEach(r=>{
         if (!memberDayData.hasOwnProperty(r.id)) return;
@@ -6386,6 +6579,7 @@ function renderRcAvailSummary(entryMeta, todayDS){
     entryMeta.forEach(({seq,res})=>{
       if (!res.find(r=>r.id===m.id)) return;
       seq.forEach(sd=>{
+        if (sd.catStatus==='Completed'||sd.catStatus==='Cancelled') return; // skip done cats
         if (sd.startStr>=todayDS) keyDates.add(sd.startStr);
         const dEnd=new Date(sd.endStr); dEnd.setDate(dEnd.getDate()+1);
         const nxt=dEnd.toLocaleDateString('en-CA');
@@ -6404,7 +6598,7 @@ function renderRcAvailSummary(entryMeta, todayDS){
       let pct=0;
       entryMeta.forEach(({seq,res})=>{
         const r=res.find(r=>r.id===m.id); if (!r) return;
-        const hit=seq.find(sd=>sd.startStr<=ds&&sd.endStr>=ds); if (!hit) return;
+        const hit=seq.find(sd=>sd.catStatus!=='Completed'&&sd.catStatus!=='Cancelled'&&sd.startStr<=ds&&sd.endStr>=ds); if (!hit) return;
         const allocs=r.allocations||{};
         const rPct=Object.keys(allocs).length>0?(allocs[hit.name]||0):(r.simPct||0)+(r.modPct||0);
         pct+=rPct;
