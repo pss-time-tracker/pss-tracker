@@ -401,9 +401,11 @@
       <div class="chart-wrap">
         <div class="d-flex justify-content-between align-items-center mb-3">
           <h6 class="fw-semibold mb-0">Project Breakdown</h6>
-          <button class="btn btn-outline-success btn-sm" onclick="downloadDashboardExcel()" title="Full export — all projects, all time, all resources (ignores current filters)">
-            <i class="bi bi-file-earmark-excel me-1"></i>Full Export (.xlsx)
-          </button>
+          <div id="dashDownloadBtn">
+            <button class="btn btn-outline-success btn-sm" onclick="downloadDashboardExcel()" title="Full export — all projects, all time, all resources (ignores current filters)">
+              <i class="bi bi-file-earmark-excel me-1"></i>Full Export (.xlsx)
+            </button>
+          </div>
         </div>
         <div class="table-responsive">
           <table class="table table-sm table-hover align-middle mb-0" id="summaryTable">
@@ -647,9 +649,11 @@
       <div class="mt-4" id="catDetailsSection">
         <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
           <h6 class="mb-0 fw-bold"><i class="bi bi-layers me-1"></i>Work Category Details</h6>
-          <button class="btn btn-outline-success btn-sm" onclick="downloadCatDetailsExcel()">
-            <i class="bi bi-file-earmark-spreadsheet me-1"></i>Download Excel
-          </button>
+          <div id="catDownloadBtn">
+            <button class="btn btn-outline-success btn-sm" onclick="downloadCatDetailsExcel()">
+              <i class="bi bi-file-earmark-spreadsheet me-1"></i>Download Excel
+            </button>
+          </div>
         </div>
         <!-- Category filter bar -->
         <div class="d-flex flex-wrap gap-2 mb-2 align-items-center"
@@ -706,9 +710,11 @@
           <h6 class="mb-0"><i class="bi bi-bar-chart-steps me-1"></i>Team Effort Summary
             <span class="badge ms-1" style="background:#e8eaf6;color:var(--primary);font-size:.7rem" id="teamEffortStatus">Loading…</span>
           </h6>
-          <button class="btn btn-outline-success btn-sm" onclick="downloadTeamEffortExcel()">
-            <i class="bi bi-file-earmark-spreadsheet me-1"></i>Download Excel
-          </button>
+          <div id="teamEffortDownloadBtn">
+            <button class="btn btn-outline-success btn-sm" onclick="downloadTeamEffortExcel()">
+              <i class="bi bi-file-earmark-spreadsheet me-1"></i>Download Excel
+            </button>
+          </div>
         </div>
         <div id="teamEffortTable" class="table-responsive"></div>
       </div>
@@ -929,9 +935,17 @@
             <label class="form-label fw-semibold">Project Value (₹)</label>
             <input type="number" id="schedProjValue" class="form-control" placeholder="0" min="0" step="1000">
           </div>
-          <div class="col-md-8">
+          <div class="col-md-6">
             <label class="form-label fw-semibold">Client / Description</label>
             <input type="text" id="schedProjDesc" class="form-control" placeholder="Client name or brief description">
+          </div>
+          <div class="col-md-2 d-flex align-items-end pb-1">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="schedIsPrivate">
+              <label class="form-check-label fw-semibold" for="schedIsPrivate" style="font-size:.85rem">
+                🔒 Private <span class="text-muted" style="font-size:.75rem">(Prasad only)</span>
+              </label>
+            </div>
           </div>
 
           <!-- Dynamic Categories & Hours -->
@@ -1702,6 +1716,10 @@ function onUserReady(){
   const adminOnly = isAdmin();
   document.getElementById('adminDataSection').style.display = adminOnly ? '' : 'none';
   document.getElementById('addSchedBtn').style.display      = adminOnly ? '' : 'none';
+  ['dashDownloadBtn','catDownloadBtn','teamEffortDownloadBtn','memberDrillDownloadBtn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = adminOnly ? '' : 'none';
+  });
   renderTeamMembersSettings();
   // Non-admins only see their own time (no "All Team" toggle)
   document.getElementById('dashViewAll').style.display = adminOnly ? '' : 'none';
@@ -2433,6 +2451,11 @@ async function renderSessionLog(){
 
   // Non-admins cannot see boss's sessions
   if (!isAdmin()) sessions = sessions.filter(s=>s.userEmail !== ADMIN_EMAIL);
+  // Non-admins cannot see sessions for private projects
+  if (!isAdmin()){
+    const privateIds = new Set(scheduleEntries.filter(e=>e.isPrivate).map(e=>e.projectId));
+    sessions = sessions.filter(s => !privateIds.has(s.projectId));
+  }
 
   // Sort latest first (by actual session start time, fallback to endTime)
   sessions.sort((a,b)=>{
@@ -2549,6 +2572,11 @@ async function renderDashboard(){
 
   // Non-admins cannot see boss's sessions
   if (!isAdmin()) sessions = sessions.filter(s=>s.userEmail !== ADMIN_EMAIL);
+  // Non-admins: exclude sessions from private projects
+  if (!isAdmin()){
+    const _privIds = new Set(scheduleEntries.filter(e=>e.isPrivate).map(e=>e.projectId));
+    sessions = sessions.filter(s => !_privIds.has(s.projectId));
+  }
 
   // Project filter
   const projFilter = document.getElementById('dashProjFilter')?.value || 'all';
@@ -2730,10 +2758,12 @@ function showProjectsDrilldown(type){
       if (isInactive) return false;
       return getSchedStatus(e, allProjectHrsMap[e.projectId]||0).key === 'behind';
     });
+    if (!isAdmin()) entries = entries.filter(e => !e.isPrivate);
     title    = '🔴 Behind Schedule Projects';
     emptyMsg = 'No projects are currently behind schedule.';
   } else if (type === 'active'){
     entries  = scheduleEntries.filter(e=>!['Cancelled','On Hold','Completed'].includes(e.schedStatus));
+    if (!isAdmin()) entries = entries.filter(e => !e.isPrivate);
     title    = '✅ Active Projects';
     emptyMsg = 'No active projects in schedule.';
   } else if (type === 'exhausted'){
@@ -2743,15 +2773,17 @@ function showProjectsDrilldown(type){
         : (e.simulationHours||0)+(e.modellingHours||0);
       return totalP > 0 && (allProjectHrsMap[e.projectId]||0) > totalP;
     });
+    if (!isAdmin()) entries = entries.filter(e => !e.isPrivate);
     title    = '⚠ Exhausted Projects';
     emptyMsg = 'No exhausted projects.';
   } else if (type === 'onhold'){
     entries  = scheduleEntries.filter(e=>e.schedStatus==='On Hold');
+    if (!isAdmin()) entries = entries.filter(e => !e.isPrivate);
     title    = '⏸ On Hold Projects';
     emptyMsg = 'No projects are on hold.';
   } else if (type === 'value'){
     // All projects with a value > 0, sorted by value descending
-    const valued = [...S.projects].filter(p => (p.value||0) > 0).sort((a,b)=>(b.value||0)-(a.value||0));
+    const valued = [...S.projects].filter(p => (p.value||0) > 0 && (isAdmin() || !p.isPrivate)).sort((a,b)=>(b.value||0)-(a.value||0));
     const cur2 = S.settings.currency || '₹';
     const totalVal = valued.reduce((s,p)=>s+(p.value||0), 0);
 
@@ -2797,6 +2829,7 @@ function showProjectsDrilldown(type){
   } else { // 'all' — projects with sessions in current dashboard period
     const periodProjIds = [...new Set(dashSessions.map(s=>s.projectId))];
     entries  = scheduleEntries.filter(e=>periodProjIds.includes(e.projectId));
+    if (!isAdmin()) entries = entries.filter(e => !e.isPrivate);
     // Also include period projects that have no schedule entry
     const noSched = periodProjIds.filter(pid=>!scheduleEntries.find(e=>e.projectId===pid));
     const extraEntries = noSched.map(pid=>{
@@ -2900,6 +2933,10 @@ function renderSettingsUI(){
 
   // Show data management section only for admin
   document.getElementById('adminDataSection').style.display = isAdmin() ? '' : 'none';
+  ['dashDownloadBtn','catDownloadBtn','teamEffortDownloadBtn','memberDrillDownloadBtn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = isAdmin() ? '' : 'none';
+  });
   renderTeamMembersSettings();
 }
 
@@ -2965,6 +3002,7 @@ function populateSelect(id, opts, selected){
 async function downloadDashboardExcel(){
   const XLSX = window.XLSX;
   if (!XLSX){ showToast('Excel library not loaded — try refreshing', 'danger'); return; }
+  if (!isAdmin()){ showToast('Download is restricted to admin only', 'danger'); return; }
 
   showToast('Preparing full export…', 'info');
 
@@ -3275,9 +3313,9 @@ function populateProjectDropdowns(){
   // Timer slot project selector
   const slotSel = document.getElementById('slotProject');
   slotSel.innerHTML='<option value="">-- Select Project --</option>';
-  S.projects.forEach(p=>{
+  S.projects.filter(p => isAdmin() || !p.isPrivate).forEach(p=>{
     const o=document.createElement('option');
-    o.value=p.id; o.textContent=`${p.num} – ${p.name}`;
+    o.value=p.id; o.textContent=`${p.num} – ${p.name}${p.isPrivate?' 🔒':''}`;
     slotSel.appendChild(o);
   });
   populateSelect('slotCategory', S.settings.workCategories, S.settings.workCategories?.[0]||'');
@@ -3287,9 +3325,9 @@ function populateProjectDropdowns(){
   if (pfSel) {
     const prev = pfSel.value;
     pfSel.innerHTML='<option value="all">All Projects</option>';
-    S.projects.forEach(p=>{
+    S.projects.filter(p => isAdmin() || !p.isPrivate).forEach(p=>{
       const o=document.createElement('option');
-      o.value=p.id; o.textContent=`${p.num} – ${p.name}`;
+      o.value=p.id; o.textContent=`${p.num} – ${p.name}${p.isPrivate?' 🔒':''}`;
       if (p.id===prev) o.selected=true;
       pfSel.appendChild(o);
     });
@@ -4284,6 +4322,8 @@ async function renderSchedule(){
   list.innerHTML = _hasFilter && !sorted.length ? list.innerHTML : '';
 
   sorted.forEach(entry=>{
+    // Non-admins cannot see private projects in schedule
+    if (!isAdmin() && entry.isPrivate) return;
     const proj       = S.projects.find(p=>p.id===entry.projectId);
     const actualHrs  = actualHrsMap[entry.projectId]||0;
     const schedSt    = entry.schedStatus || 'Active';
@@ -4416,6 +4456,7 @@ async function renderSchedule(){
           <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
             <span class="fw-bold text-primary">${esc(proj?.num||'')}</span>
             <span class="fw-semibold">${esc(proj?.name||'Unknown Project')}</span>
+            ${entry.isPrivate ? `<span class="badge ms-1" style="background:#f3e5f5;color:#7b1fa2;font-size:.68rem;border:1px solid #ce93d8">🔒 Private</span>` : ''}
             ${schedStBadge}
             ${status.key === 'exhausted' ? exhaustedBadge : (!isInactive ? `<span class="sched-badge ${status.key}">${status.label}</span>` : '')}
             <span class="badge ms-1" style="background:${urgColor}22;color:${urgColor};border:1px solid ${urgColor}55;font-size:.72rem">${entry.urgency||'Medium'} Priority</span>
@@ -4689,6 +4730,8 @@ function openAddSchedule(){
   populateSelect('schedProjType', S.settings.projectTypes || [], '');
   document.getElementById('schedProjValue').value = '';
   document.getElementById('schedProjDesc').value  = '';
+  const _addPrivCb = document.getElementById('schedIsPrivate');
+  if (_addPrivCb) _addPrivCb.checked = false;
   _prevSchedStatus = 'Active';
   schedCategoryRows = [];
   renderSchedCatList();
@@ -4721,6 +4764,8 @@ function openEditSchedule(id){
   populateSelect('schedProjType', S.settings.projectTypes || [], _projForEntry?.type || '');
   document.getElementById('schedProjValue').value = _projForEntry?.value || '';
   document.getElementById('schedProjDesc').value  = _projForEntry?.desc  || '';
+  const privCb = document.getElementById('schedIsPrivate');
+  if (privCb) privCb.checked = entry.isPrivate === true;
 
   // Load categories (new format) or build from legacy sim/mod hours
   if (entry.categories && entry.categories.length) {
@@ -4806,6 +4851,7 @@ async function saveSchedule(){
     modellingPct    : teamMembers.length ? Math.round(totalModPct / teamMembers.length) : 0,
     startDate       : startVal,
     endDate         : document.getElementById('schedEnd').value || null,
+    isPrivate       : isAdmin() ? (document.getElementById('schedIsPrivate')?.checked || false) : false,
     updatedAt       : firebase.firestore.FieldValue.serverTimestamp()
   };
 
@@ -5699,6 +5745,7 @@ function clearCatFilter(){
 }
 
 async function downloadCatDetailsExcel(){
+  if (!isAdmin()){ showToast('Download is restricted to admin only', 'danger'); return; }
   const XLSX = window.XLSX;
   if (!XLSX){ showToast('Excel library not loaded','danger'); return; }
 
@@ -5982,6 +6029,7 @@ function openTeamEffortDrill(memberId){
 }
 
 function downloadTeamEffortExcel(){
+  if (!isAdmin()){ showToast('Download is restricted to admin only', 'danger'); return; }
   if (!_teamEffortSessions.length && !teamMembers.length){
     showToast('No data to export', 'warning'); return;
   }
@@ -6067,9 +6115,11 @@ function downloadMemberDrillExcel(){
         <p class="text-muted text-center py-4">Loading…</p>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-outline-success btn-sm" onclick="downloadMemberDrillExcel()">
-          <i class="bi bi-file-earmark-spreadsheet me-1"></i>Download Excel
-        </button>
+        <div id="memberDrillDownloadBtn">
+          <button class="btn btn-outline-success btn-sm" onclick="downloadMemberDrillExcel()">
+            <i class="bi bi-file-earmark-spreadsheet me-1"></i>Download Excel
+          </button>
+        </div>
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
       </div>
     </div>
