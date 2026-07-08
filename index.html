@@ -1397,6 +1397,7 @@ let S = {
 let activeTimers = loadTimers();
 let masterIv     = null;
 let pendingStop  = null;  // {slotId, totalSecs, projectId, startISO, category}
+let editSessFullData = null;  // full Firestore doc data for the session currently open in the edit modal
 
 let dashUserView = 'all';
 let logUserView  = 'all';
@@ -1438,6 +1439,35 @@ let autoSaveTick = 0;
 /* Admin / boss identity */
 const ADMIN_EMAIL = 'prasad.rssaj@gmail.com';
 function isAdmin(){ return currentUser && currentUser.email === ADMIN_EMAIL; }
+
+/* The "private" flag lives on the schedule ENTRY (scheduleEntries[].isPrivate), not
+   on the project record itself — S.projects items never carry an isPrivate field.
+   Any code that needs to know whether a *project* is private must look it up here. */
+function privateProjectIds(){
+  return new Set(scheduleEntries.filter(e => e.isPrivate).map(e => e.projectId));
+}
+function isProjectPrivate(projectId){
+  return scheduleEntries.some(e => e.projectId === projectId && e.isPrivate);
+}
+/* Team members visible to the CURRENT viewer — the admin's own record is
+   hidden from everyone else so his personal schedule/time never appears in
+   team-wide tables (Resource Calendar, Team Bandwidth, Resource Daily
+   Schedule, Team Effort Summary, etc). Admin sees everyone including himself. */
+function visibleTeamMembers(){
+  return isAdmin()
+    ? teamMembers
+    : teamMembers.filter(m => (m.email||'').toLowerCase() !== ADMIN_EMAIL.toLowerCase());
+}
+/* Active (non-completed/cancelled) schedule entries visible to the current
+   viewer — excludes the admin's private entries for everyone but him. */
+function visibleScheduleEntries(){
+  return isAdmin() ? scheduleEntries : scheduleEntries.filter(e => !e.isPrivate);
+}
+/* Sessions visible to the current viewer — the admin's own logged sessions
+   (his time) are never shown to other team members. */
+function visibleSessions(list){
+  return isAdmin() ? list : list.filter(s => (s.userEmail||'').toLowerCase() !== ADMIN_EMAIL.toLowerCase());
+}
 
 /* Per-device identifier — survives page refresh, unique per browser/tab */
 const DEVICE_ID = (() => {
@@ -1818,7 +1848,12 @@ function showPage(page){
 /* ═══════════════════════════════════════════════════════════════
    TIMER LOGIC
 ═══════════════════════════════════════════════════════════════ */
-function todayStr(){ return new Date().toISOString().slice(0,10) }
+/* IMPORTANT: always compute calendar dates from LOCAL time, never
+   new Date().toISOString().slice(0,10) — that gives the UTC date, which
+   for IST (UTC+5:30) is the wrong (previous) day for anything logged
+   between 12:00am and 5:29am local time. */
+function todayStr(){ return new Date().toLocaleDateString('en-CA') }
+function toLocalDateStr(d){ return new Date(d).toLocaleDateString('en-CA') }
 
 function secsToHMS(s){
   s=Math.max(0,Math.floor(s));
@@ -1830,6 +1865,33 @@ function hmsToSecs(str){
   const parts = str.trim().split(':').map(Number);
   if (parts.length !== 3 || parts.some(isNaN) || parts.some(v=>v<0)) return null;
   return parts[0]*3600 + parts[1]*60 + parts[2];
+}
+
+/* Split a start→end timestamp range into one segment per calendar day (local time).
+   Used so a timer/session crossing midnight (e.g. 10pm→1am) attributes hours to the
+   correct day instead of dumping the whole duration on the end date:
+   10pm→1am becomes [2h on day 1][1h on day 2]. */
+function splitSessionByDay(startISO, endISO){
+  const segments = [];
+  let curStart = new Date(startISO);
+  const end    = new Date(endISO);
+  if (!(curStart < end)) return segments;
+
+  while (curStart < end){
+    const dayEnd = new Date(curStart.getFullYear(), curStart.getMonth(), curStart.getDate(), 23,59,59,999);
+    const segEnd = dayEnd < end ? dayEnd : end;
+    const dur    = Math.max(0, Math.round((segEnd - curStart)/1000));
+    if (dur > 0){
+      segments.push({
+        startTime : curStart.toISOString(),
+        endTime   : segEnd.toISOString(),
+        date      : curStart.toLocaleDateString('en-CA'),
+        duration  : dur
+      });
+    }
+    curStart = new Date(curStart.getFullYear(), curStart.getMonth(), curStart.getDate()+1, 0,0,0,0);
+  }
+  return segments;
 }
 
 function getElapsed(t){
@@ -2079,43 +2141,51 @@ async function saveStop(skipNotes){
   const totalSecs  = (editedSecs !== null && editedSecs > 0) ? editedSecs : pendingStop.totalSecs;
   const notes   = skipNotes ? '' : document.getElementById('stopNotes').value.trim();
   const endISO  = new Date(new Date(startISO).getTime() + totalSecs * 1000).toISOString();
-  const dateStr = endISO.slice(0, 10);
+  const dateStr = toLocalDateStr(endISO);   // local calendar date, not UTC
 
   if (totalSecs > 0) {
-    const session = {
+    const baseSession = {
       projectId,
       category  : category || '',
       notes     : notes,
       userId    : currentUser.uid,
       userName  : currentUserName,
-      userEmail : currentUser.email || '',
-      startTime : startISO,
-      endTime   : endISO,
-      duration  : totalSecs,
-      date      : dateStr
+      userEmail : currentUser.email || ''
     };
+
+    // Split across midnight if the timer ran past 12am — each calendar day
+    // gets its own logged-hours entry (e.g. 10pm→1am = 2h day 1 + 1h day 2).
+    const daySegments = splitSessionByDay(startISO, endISO);
+    const sessionsToSave = (daySegments.length ? daySegments : [{
+      startTime: startISO, endTime: endISO, duration: totalSecs, date: dateStr
+    }]).map(seg => ({ ...baseSession, ...seg }));
 
     if (CONFIGURED && db){
       if (navigator.onLine){
         try {
-          await db.collection('sessions').add({
-            ...session,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-          });
-          autoUpdateCategoryStatus(session.projectId, session.category);
+          for (const session of sessionsToSave){
+            await db.collection('sessions').add({
+              ...session,
+              createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+          }
+          autoUpdateCategoryStatus(baseSession.projectId, baseSession.category);
         } catch(e){
           // Firestore write failed — fallback to offline queue
           console.warn('Firestore write failed, queuing', e);
-          addToOfflineQueue({...session, _id: Date.now().toString(), createdAt: endISO});
+          sessionsToSave.forEach(session =>
+            addToOfflineQueue({...session, _id: Date.now().toString()+'_'+session.date, createdAt: endISO}));
           showToast('Offline — session saved locally, will sync when connected', 'warning');
         }
       } else {
         // No network — queue and sync later
-        addToOfflineQueue({...session, _id: Date.now().toString(), createdAt: endISO});
+        sessionsToSave.forEach(session =>
+          addToOfflineQueue({...session, _id: Date.now().toString()+'_'+session.date, createdAt: endISO}));
         showToast('Offline — session saved locally, will sync automatically', 'warning');
       }
     } else {
-      S.sessions.push({...session, id: Date.now().toString(), createdAt: endISO});
+      sessionsToSave.forEach(session =>
+        S.sessions.push({...session, id: Date.now().toString()+'_'+session.date, createdAt: endISO}));
     }
   }
 
@@ -2604,12 +2674,12 @@ async function renderDashboard(){
     startDate = endDate = todayStr();
   } else if (period==='week'){
     const d = new Date(); d.setDate(d.getDate()-d.getDay());
-    startDate = d.toISOString().slice(0,10);
+    startDate = toLocalDateStr(d);
     endDate   = todayStr();
   } else {
     startDate = `${year}-${String(month+1).padStart(2,'0')}-01`;
     const last = new Date(year, month+1, 0);
-    endDate   = last.toISOString().slice(0,10);
+    endDate   = toLocalDateStr(last);
   }
 
   let sessions = [];
@@ -2838,7 +2908,8 @@ function showProjectsDrilldown(type){
     emptyMsg = 'No projects are on hold.';
   } else if (type === 'value'){
     // All projects with a value > 0, sorted by value descending
-    const valued = [...S.projects].filter(p => (p.value||0) > 0 && (isAdmin() || !p.isPrivate)).sort((a,b)=>(b.value||0)-(a.value||0));
+    const _privIds4val = privateProjectIds();
+    const valued = [...S.projects].filter(p => (p.value||0) > 0 && (isAdmin() || !_privIds4val.has(p.id))).sort((a,b)=>(b.value||0)-(a.value||0));
     const cur2 = S.settings.currency || '₹';
     const totalVal = valued.reduce((s,p)=>s+(p.value||0), 0);
 
@@ -3257,10 +3328,10 @@ async function exportAllLogs(period){
 
   let startDate = null;
   const now = new Date();
-  if (period === '1month')  { const d=new Date(now); d.setMonth(d.getMonth()-1);        startDate=d.toISOString().slice(0,10); }
-  if (period === '3months') { const d=new Date(now); d.setMonth(d.getMonth()-3);        startDate=d.toISOString().slice(0,10); }
-  if (period === '6months') { const d=new Date(now); d.setMonth(d.getMonth()-6);        startDate=d.toISOString().slice(0,10); }
-  if (period === '1year')   { const d=new Date(now); d.setFullYear(d.getFullYear()-1);  startDate=d.toISOString().slice(0,10); }
+  if (period === '1month')  { const d=new Date(now); d.setMonth(d.getMonth()-1);        startDate=toLocalDateStr(d); }
+  if (period === '3months') { const d=new Date(now); d.setMonth(d.getMonth()-3);        startDate=toLocalDateStr(d); }
+  if (period === '6months') { const d=new Date(now); d.setMonth(d.getMonth()-6);        startDate=toLocalDateStr(d); }
+  if (period === '1year')   { const d=new Date(now); d.setFullYear(d.getFullYear()-1);  startDate=toLocalDateStr(d); }
 
   showToast('Preparing export…', 'info');
   try {
@@ -3341,10 +3412,10 @@ async function clearLogsByPeriod(period){
 
   let startDate = null;
   const now = new Date();
-  if (period === '1month')  { const d=new Date(now); d.setMonth(d.getMonth()-1);       startDate=d.toISOString().slice(0,10); }
-  if (period === '3months') { const d=new Date(now); d.setMonth(d.getMonth()-3);       startDate=d.toISOString().slice(0,10); }
-  if (period === '6months') { const d=new Date(now); d.setMonth(d.getMonth()-6);       startDate=d.toISOString().slice(0,10); }
-  if (period === '1year')   { const d=new Date(now); d.setFullYear(d.getFullYear()-1); startDate=d.toISOString().slice(0,10); }
+  if (period === '1month')  { const d=new Date(now); d.setMonth(d.getMonth()-1);       startDate=toLocalDateStr(d); }
+  if (period === '3months') { const d=new Date(now); d.setMonth(d.getMonth()-3);       startDate=toLocalDateStr(d); }
+  if (period === '6months') { const d=new Date(now); d.setMonth(d.getMonth()-6);       startDate=toLocalDateStr(d); }
+  if (period === '1year')   { const d=new Date(now); d.setFullYear(d.getFullYear()-1); startDate=toLocalDateStr(d); }
 
   showToast('Deleting sessions…', 'warning');
   try {
@@ -3365,12 +3436,14 @@ async function clearLogsByPeriod(period){
 }
 
 function populateProjectDropdowns(){
-  // Timer slot project selector
+  const privIds = privateProjectIds();   // schedule-entry-derived — see isProjectPrivate()
+
+  // Timer slot project selector — private projects only selectable by their owner (admin)
   const slotSel = document.getElementById('slotProject');
   slotSel.innerHTML='<option value="">-- Select Project --</option>';
-  S.projects.filter(p => isAdmin() || !p.isPrivate).forEach(p=>{
+  S.projects.filter(p => isAdmin() || !privIds.has(p.id)).forEach(p=>{
     const o=document.createElement('option');
-    o.value=p.id; o.textContent=`${p.num} – ${p.name}${p.isPrivate?' 🔒':''}`;
+    o.value=p.id; o.textContent=`${p.num} – ${p.name}${privIds.has(p.id)?' 🔒':''}`;
     slotSel.appendChild(o);
   });
   populateSelect('slotCategory', S.settings.workCategories, S.settings.workCategories?.[0]||'');
@@ -3380,9 +3453,9 @@ function populateProjectDropdowns(){
   if (pfSel) {
     const prev = pfSel.value;
     pfSel.innerHTML='<option value="all">All Projects</option>';
-    S.projects.filter(p => isAdmin() || !p.isPrivate).forEach(p=>{
+    S.projects.filter(p => isAdmin() || !privIds.has(p.id)).forEach(p=>{
       const o=document.createElement('option');
-      o.value=p.id; o.textContent=`${p.num} – ${p.name}${p.isPrivate?' 🔒':''}`;
+      o.value=p.id; o.textContent=`${p.num} – ${p.name}${privIds.has(p.id)?' 🔒':''}`;
       if (p.id===prev) o.selected=true;
       pfSel.appendChild(o);
     });
@@ -4231,7 +4304,7 @@ function calcSuggestedStart(){
   // Suggest day after the latest busy date
   const d = new Date(latestDate);
   d.setDate(d.getDate() + 1);
-  const str = d.toISOString().slice(0,10);
+  const str = toLocalDateStr(d);
   document.getElementById('schedStart').value = str;
 
   const box = document.getElementById('schedSuggestion');
@@ -4328,13 +4401,13 @@ async function renderSchedule(){
   const memberActualMap = {};
 
   const _now = new Date();
-  const todayDateStr  = _now.toISOString().slice(0,10);
+  const todayDateStr  = toLocalDateStr(_now);
   // Week start = Monday
   const _dow = _now.getDay();
   const _wkStart = new Date(_now);
   _wkStart.setDate(_now.getDate() + (_dow===0 ? -6 : 1-_dow));
   _wkStart.setHours(0,0,0,0);
-  const weekStartStr  = _wkStart.toISOString().slice(0,10);
+  const weekStartStr  = toLocalDateStr(_wkStart);
   // Month start
   const monthStartStr = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-01`;
 
@@ -4777,12 +4850,12 @@ async function checkBehindSchedule(){
   const memberActualMap = {};
 
   const _now2 = new Date();
-  const todayDateStr2  = _now2.toISOString().slice(0,10);
+  const todayDateStr2  = toLocalDateStr(_now2);
   const _dow2 = _now2.getDay();
   const _wk2  = new Date(_now2);
   _wk2.setDate(_now2.getDate() + (_dow2===0 ? -6 : 1-_dow2));
   _wk2.setHours(0,0,0,0);
-  const weekStartStr2   = _wk2.toISOString().slice(0,10);
+  const weekStartStr2   = toLocalDateStr(_wk2);
   const monthStartStr2  = `${_now2.getFullYear()}-${String(_now2.getMonth()+1).padStart(2,'0')}-01`;
 
   if (CONFIGURED && db){
@@ -5030,6 +5103,22 @@ async function saveSchedule(){
   }
 
   const resources = getResourceAllocDataDyn();
+
+  // Warn if a category has planned hours but no resource % allocated to it.
+  // With 0% capacity that category collapses to a single day internally instead
+  // of spanning its real duration, so the assignee will show up as "fully
+  // available" on the Resource Calendar / Team Bandwidth for the rest of it.
+  const zeroCapCats = schedCategoryRows.filter(c =>
+    (c.plannedHours||0) > 0 && catDailyCapacity(resources, c.name) <= 0);
+  if (zeroCapCats.length){
+    const names = zeroCapCats.map(c=>c.name).join(', ');
+    const proceed = confirm(
+      `"${names}" ${zeroCapCats.length>1?'have':'has'} planned hours but 0% resource allocation.\n\n` +
+      `This category won't reduce anyone's availability on the Resource Calendar — the assignee will look fully free instead of booked.\n\n` +
+      `Save anyway?`);
+    if (!proceed) return;
+  }
+
   // For backward compat and team util card, compute sim+mod aggregates
   const totalSimPct = resources.reduce((s,r)=>s+(r.allocations?.['Simulation']||0),0);
   const totalModPct = resources.reduce((s,r)=>s+(r.allocations?.['Modelling']||0),0);
@@ -5120,9 +5209,14 @@ function renderResourceDailySchedule(){
   const div = document.getElementById('resDailySection');
   if (!div) return;
 
+  const viewerIsAdmin3 = isAdmin();
+  const visMembers3    = visibleTeamMembers();
+
   // Only show active entries that have at least one assigned resource
+  // (private entries excluded for anyone but the admin)
   const active = scheduleEntries.filter(e =>
     (!e.schedStatus || e.schedStatus === 'Active') &&
+    (viewerIsAdmin3 || !e.isPrivate) &&
     (e.resources||[]).length > 0
   );
 
@@ -5140,7 +5234,7 @@ function renderResourceDailySchedule(){
   });
 
   // Per team member, compute daily hours on each project (active category only)
-  const memberRows = teamMembers.map(tm => {
+  const memberRows = visMembers3.map(tm => {
     const cells = activeEntryMeta.map(({ entry: e, activeCat }) => {
       const r = (e.resources||[]).find(r => r.id === tm.id);
       if (!r) return { hrs:0, pct:0 };
@@ -5252,6 +5346,7 @@ async function openEditSession(sessId){
   const doc = await db.collection('sessions').doc(sessId).get().catch(()=>null);
   if (!doc || !doc.exists){ showToast('Session not found', 'danger'); return; }
   const s = { id: doc.id, ...doc.data() };
+  editSessFullData = s;
 
   document.getElementById('editSessId').value = sessId;
 
@@ -5315,30 +5410,52 @@ async function saveEditSession(){
 
   if (endDt <= startDt){ showToast('End must be after start', 'warning'); return; }
 
-  const diffSecs = Math.round((endDt - startDt) / 1000);
-  const dateStr  = startDt.toLocaleDateString('en-CA');
   const category = document.getElementById('editSessCategory').value;
   const notes    = document.getElementById('editSessNotes').value.trim();
+  const editedBy = currentUser?.email || currentUser?.displayName || '';
 
-  const updates = {
-    startTime : startISO,
-    endTime   : endISO,
-    duration  : diffSecs,
-    date      : dateStr,
-    category,
-    notes,
-    editedBy  : currentUser?.email || currentUser?.displayName || '',
-    updatedAt : firebase.firestore.FieldValue.serverTimestamp()
+  // Split across midnight (e.g. 10pm→1am = 2h day 1 + 1h day 2) rather than
+  // logging the whole edited duration against a single day.
+  const segments = splitSessionByDay(startISO, endISO);
+  if (!segments.length){ showToast('End must be after start', 'warning'); return; }
+
+  // Carry over identity fields the edit form doesn't expose
+  const base = editSessFullData || {};
+  const carryFields = {
+    projectId : base.projectId,
+    userId    : base.userId,
+    userName  : base.userName,
+    userEmail : base.userEmail
   };
 
   try {
-    await db.collection('sessions').doc(sessId).update(updates);
+    // First segment updates the existing doc in place
+    await db.collection('sessions').doc(sessId).update({
+      ...segments[0],
+      category, notes,
+      editedBy,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    // Any additional day segments become new session docs
+    for (const seg of segments.slice(1)){
+      await db.collection('sessions').add({
+        ...carryFields, ...seg,
+        category, notes,
+        editedBy,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    }
     editSessModal.hide();
-    showToast('Session updated ✓', 'success');
+    showToast(segments.length > 1
+      ? `Session updated ✓ (split across ${segments.length} days)`
+      : 'Session updated ✓', 'success');
     renderSessionLog();
   } catch(e){
     showToast('Update failed: '+e.message, 'danger');
     console.error('saveEditSession', e);
+  } finally {
+    editSessFullData = null;
   }
 }
 
@@ -5517,16 +5634,22 @@ function getApprovedLeaveDatesForResources(resourceIds){
    FEATURE 3 — TEAM BANDWIDTH TAB
 ═══════════════════════════════════════════════════════════════ */
 function renderTeamBandwidth(){
+  // Admin's private/personal schedule must stay invisible to other team members.
+  const viewerIsAdmin2  = isAdmin();
+  const visibleMembers2 = viewerIsAdmin2
+    ? teamMembers
+    : teamMembers.filter(m => (m.email||'').toLowerCase() !== ADMIN_EMAIL.toLowerCase());
+
   // ── Per-member occupied % from active schedule entries ──────────
   const memberOccupied = {};   // memberId → total committed %
   const memberProjects = {};   // memberId → [{proj, entry, pct}]
-  teamMembers.forEach(m => {
+  visibleMembers2.forEach(m => {
     memberOccupied[m.id] = 0;
     memberProjects[m.id] = [];
   });
 
   const activeEntries = scheduleEntries.filter(e =>
-    !e.schedStatus || e.schedStatus === 'Active'
+    (!e.schedStatus || e.schedStatus === 'Active') && (viewerIsAdmin2 || !e.isPrivate)
   );
   activeEntries.forEach(e => {
     const proj    = S.projects.find(p => p.id === e.projectId);
@@ -5553,7 +5676,7 @@ function renderTeamBandwidth(){
   // ── Render member cards ──────────────────────────────────────────
   const cardsEl = document.getElementById('teamBandwidthCards');
   cardsEl.innerHTML = '';
-  teamMembers.forEach(m => {
+  visibleMembers2.forEach(m => {
     const occ  = Math.min(memberOccupied[m.id], 100);
     const free = Math.max(0, 100 - memberOccupied[m.id]);
     const over = memberOccupied[m.id] > 100;
@@ -5889,15 +6012,24 @@ async function renderCategoryDetails(){
   }
 
   // Aggregate: project × category → hours, resources
+  // Private (admin-only) projects and the admin's own logged sessions are
+  // excluded for anyone but the admin.
+  const viewerIsAdminCD = isAdmin();
+  const visibleSess     = viewerIsAdminCD
+    ? _catDetailSessions
+    : _catDetailSessions.filter(s => (s.userEmail||'').toLowerCase() !== ADMIN_EMAIL.toLowerCase());
+
   const rows = [];  // {proj, entry, cat, catActualHrs, byMember}
-  scheduleEntries.forEach(entry => {
+  scheduleEntries
+    .filter(entry => viewerIsAdminCD || !entry.isPrivate)
+    .forEach(entry => {
     const proj = S.projects.find(p => p.id === entry.projectId);
     const cats = entry.categories?.length ? entry.categories
       : [{name:'Simulation',plannedHours:entry.simulationHours||0,status:'Not Started'},
          {name:'Modelling', plannedHours:entry.modellingHours||0, status:'Not Started'}].filter(c=>c.plannedHours>0);
 
     // Sessions for this project
-    const projSessions = _catDetailSessions.filter(s => s.projectId === entry.projectId);
+    const projSessions = visibleSess.filter(s => s.projectId === entry.projectId);
 
     cats.forEach(cat => {
       // Sessions for this category (fuzzy match same as catType)
@@ -5922,7 +6054,7 @@ async function renderCategoryDetails(){
         if (catActualHrs > planned)   { schedKey='ahead';   schedLabel='Ahead'; }
         else {
           // Use project-level dates to determine behind/ontrack
-          const projSt = getSchedStatus(entry, _catDetailSessions.filter(s=>s.projectId===entry.projectId).reduce((t,s)=>t+(s.duration||0)/3600,0));
+          const projSt = getSchedStatus(entry, visibleSess.filter(s=>s.projectId===entry.projectId).reduce((t,s)=>t+(s.duration||0)/3600,0));
           if (projSt.key === 'behind') { schedKey='behind'; schedLabel='Behind Schedule'; }
           else schedKey='ontrack';
         }
@@ -6142,7 +6274,10 @@ async function renderTeamEffort(){
   const statusEl = document.getElementById('teamEffortStatus');
   if (!tableEl) return;
 
-  if (!teamMembers.length){
+  // Admin's own effort is never shown to other team members.
+  const teMembers = visibleTeamMembers();
+
+  if (!teMembers.length){
     tableEl.innerHTML = '<p class="text-muted text-center py-3">No team members configured. Add members in Settings → Team Members.</p>';
     if (statusEl) statusEl.textContent = '0 members';
     return;
@@ -6174,13 +6309,13 @@ async function renderTeamEffort(){
 
   // Build member → period → hours map
   const memberHrs = {};   // memberId → {today, week, month, quarter, year}
-  teamMembers.forEach(m => {
+  teMembers.forEach(m => {
     memberHrs[m.id] = { today:0, week:0, month:0, quarter:0, year:0 };
   });
 
   sessions.forEach(s => {
     const email = (s.userEmail||'').toLowerCase();
-    const m = teamMembers.find(x => (x.email||'').toLowerCase() === email);
+    const m = teMembers.find(x => (x.email||'').toLowerCase() === email);
     if (!m) return;
     const hrs = (s.duration||0) / 3600;
     const d   = s.date || '';
@@ -6193,7 +6328,7 @@ async function renderTeamEffort(){
 
   // Build summary table
   const headerCells = periods.map(p => `<th class="text-center" style="white-space:nowrap;font-size:.8rem">${p.label}</th>`).join('');
-  const rows = teamMembers.map(m => {
+  const rows = teMembers.map(m => {
     const row = memberHrs[m.id];
     const totalYr = row.year;
     const cells = periods.map(p => {
@@ -6227,12 +6362,13 @@ async function renderTeamEffort(){
     </table>`;
 
   const totalSessions = sessions.length;
-  if (statusEl) statusEl.textContent = `${teamMembers.length} members · ${totalSessions} sessions this year`;
+  if (statusEl) statusEl.textContent = `${teMembers.length} members · ${totalSessions} sessions this year`;
 }
 
 function openTeamEffortDrill(memberId){
   const m = teamMembers.find(x => x.id === memberId);
   if (!m) return;
+  if (!isAdmin() && (m.email||'').toLowerCase() === ADMIN_EMAIL.toLowerCase()) return;
 
   document.getElementById('drillMemberName').textContent = m.name;
   const body = document.getElementById('teamEffortDrillBody');
@@ -6432,9 +6568,17 @@ function renderResourceCalendar(){
     days.push({d, dateStr:ds, isWeekend: dow===0||dow===6});
   }
 
+  // Admin's personal/private schedule & calendar must not be visible to other
+  // team members — only Prasad (the admin) sees his own card and details.
+  const viewerIsAdmin  = isAdmin();
+  const visibleMembers = viewerIsAdmin
+    ? teamMembers
+    : teamMembers.filter(m => (m.email||'').toLowerCase() !== ADMIN_EMAIL.toLowerCase());
+
   // Pre-compute sequential dates per active schedule entry
   const entryMeta = scheduleEntries
     .filter(e => !e.schedStatus || e.schedStatus==='Active')
+    .filter(e => viewerIsAdmin || !e.isPrivate)   // hide private projects from non-admins entirely
     .map(e => {
       const cats  = e.categories?.length ? e.categories : [];
       const res   = e.resources || [];
@@ -6449,7 +6593,7 @@ function renderResourceCalendar(){
 
   // memberDayData[memberId][dateStr] = {projs:[{proj,catName,pct,plannedHrs}], totalPct}
   const memberDayData = {};
-  teamMembers.forEach(m => { memberDayData[m.id]={}; });
+  visibleMembers.forEach(m => { memberDayData[m.id]={}; });
 
   days.forEach(({dateStr,isWeekend})=>{
     if (isWeekend) return;
@@ -6478,10 +6622,12 @@ function renderResourceCalendar(){
   });
 
   // Logged hours per member per day → keyed by m.email
+  // Non-admins never see the admin's actual logged time either.
   const logMap = {};  // email → dateStr → {total, byProj:{projId:hrs}}
   rcSessions.forEach(s=>{
     const em = (s.userEmail||'').toLowerCase();
     if (!em||!s.date) return;
+    if (!viewerIsAdmin && em === ADMIN_EMAIL.toLowerCase()) return;
     if (!logMap[em]) logMap[em]={};
     if (!logMap[em][s.date]) logMap[em][s.date]={total:0,byProj:{}};
     const hrs=(s.duration||0)/3600;
@@ -6490,14 +6636,14 @@ function renderResourceCalendar(){
   });
 
   // Availability summary
-  renderRcAvailSummary(entryMeta, todayDS);
+  renderRcAvailSummary(entryMeta, todayDS, visibleMembers);
 
   // Render per-member calendar grids
   const calEl = document.getElementById('rcCalendars');
   if (!calEl) return;
   calEl.innerHTML = '';
 
-  if (!teamMembers.length){
+  if (!visibleMembers.length){
     calEl.innerHTML='<p class="text-muted text-center py-5"><i class="bi bi-people" style="font-size:2rem;opacity:.3;display:block;margin-bottom:.5rem"></i>No team members. Add them in Settings.</p>';
     return;
   }
@@ -6506,7 +6652,7 @@ function renderResourceCalendar(){
   const firstDow = new Date(rcYear,rcMonth,1).getDay();
   const offset   = (firstDow+6)%7;
 
-  teamMembers.forEach(m=>{
+  visibleMembers.forEach(m=>{
     const mEmail  = (m.email||'').toLowerCase();
     const logToday= logMap[mEmail]?.[todayDS];
     const tdData  = memberDayData[m.id][todayDS];
@@ -6568,12 +6714,12 @@ function renderResourceCalendar(){
   });
 }
 
-function renderRcAvailSummary(entryMeta, todayDS){
+function renderRcAvailSummary(entryMeta, todayDS, members){
   const el=document.getElementById('rcAvailSummary');
   if (!el) return;
   const fmtD=ds=>new Date(ds).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
 
-  const pills=teamMembers.map(m=>{
+  const pills=(members||teamMembers).map(m=>{
     // Key transition dates: today + category boundaries for entries involving this member
     const keyDates=new Set([todayDS]);
     entryMeta.forEach(({seq,res})=>{
