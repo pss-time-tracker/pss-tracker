@@ -1416,7 +1416,8 @@ let schedModal      = null;
 let schedCategoryRows    = []; // [{name, plannedHours}] — working state inside modal
 let schedAssignedMembers = []; // [{id, name, allocations:{catName:pct}}] — who is on THIS project
 const WEEKLY_HRS    = 48;  // per member per week (8 hrs × 6 days)
-const DAILY_HRS     = 8;   // working hours per member per day
+const DAILY_HRS     = 8;   // working hours per member per day (everyone except the admin)
+const ADMIN_DAILY_HRS = 24; // Prasad (admin) is treated as working 24h/day in all capacity math
 let teamMembers = [];  // loaded from Firestore — no hardcoded defaults
 
 // Bootstrap modal instances
@@ -1467,6 +1468,17 @@ function visibleScheduleEntries(){
    (his time) are never shown to other team members. */
 function visibleSessions(list){
   return isAdmin() ? list : list.filter(s => (s.userEmail||'').toLowerCase() !== ADMIN_EMAIL.toLowerCase());
+}
+
+/* Prasad (admin) works a 24h day in all capacity/hours math; everyone else
+   uses the normal DAILY_HRS. Look up by team-member id (schedule resource
+   rows only carry {id,name,allocations}, so we cross-reference teamMembers). */
+function dailyHrsForMemberId(memberId){
+  const m = teamMembers.find(x => x.id === memberId);
+  return (m && (m.email||'').toLowerCase() === ADMIN_EMAIL.toLowerCase()) ? ADMIN_DAILY_HRS : DAILY_HRS;
+}
+function dailyHrsForEmail(email){
+  return (email||'').toLowerCase() === ADMIN_EMAIL.toLowerCase() ? ADMIN_DAILY_HRS : DAILY_HRS;
 }
 
 /* Per-device identifier — survives page refresh, unique per browser/tab */
@@ -3992,7 +4004,7 @@ function renderDynResourceTable(existingResources){
     }).join('');
     // Sequential categories — peak commitment is MAX across categories (only one active at a time)
     const totalPct = cats.length ? Math.max(...cats.map(c=>allocs[c.name]||0)) : 0;
-    const daily    = (totalPct/100*DAILY_HRS).toFixed(1);
+    const daily    = (totalPct/100*dailyHrsForMemberId(m.id)).toFixed(1);
     const row = document.createElement('tr');
     row.dataset.mid = m.id;
     row.innerHTML = `
@@ -4028,15 +4040,17 @@ function updateDynAllocTotals(){
     const tEl = document.getElementById('resTotal_'+m.id);
     const dEl = document.getElementById('resDaily_'+m.id);
     if (tEl){ tEl.textContent = rowTotal+'%'; tEl.style.color = rowTotal>100?'var(--danger)':''; }
-    if (dEl)  dEl.textContent = (rowTotal/100*DAILY_HRS).toFixed(1)+'h';
+    if (dEl)  dEl.textContent = (rowTotal/100*dailyHrsForMemberId(m.id)).toFixed(1)+'h';
   });
 
-  // Column totals row
+  // Column totals row — sum actual HOURS per member (each at their own daily
+  // hours) rather than summing percentages and multiplying by one constant,
+  // since the admin's day is 24h while everyone else's is DAILY_HRS.
   const totRow = document.getElementById('allocTotalsRow');
   if (!totRow || !cats.length || !members.length){ if(totRow) totRow.innerHTML=''; return; }
   const colTotals = cats.map(c => {
-    const s = members.reduce((acc,m)=>(acc+(m.allocations?.[c.name]||0)),0);
-    return `<span class="me-2"><span class="fw-semibold text-primary">${(s/100*DAILY_HRS).toFixed(1)}h</span>/day ${esc(c.name)}</span>`;
+    const hrs = members.reduce((acc,m)=>(acc+(m.allocations?.[c.name]||0)/100*dailyHrsForMemberId(m.id)),0);
+    return `<span class="me-2"><span class="fw-semibold text-primary">${hrs.toFixed(1)}h</span>/day ${esc(c.name)}</span>`;
   });
   totRow.innerHTML = 'Daily project capacity: ' + colTotals.join('&nbsp;·&nbsp;');
 }
@@ -4048,21 +4062,24 @@ function getResourceAllocDataDyn(){
     name:       m.name,
     allocations:m.allocations,
     totalPct:   Object.values(m.allocations||{}).reduce((s,v)=>s+v,0),
-    dailyHrs:   Object.values(m.allocations||{}).reduce((s,v)=>s+v,0)/100*DAILY_HRS,
+    dailyHrs:   Object.values(m.allocations||{}).reduce((s,v)=>s+v,0)/100*dailyHrsForMemberId(m.id),
     simPct:     m.allocations?.['Simulation']||0,
     modPct:     m.allocations?.['Modelling'] ||0
   }));
 }
 
-/* Helper: daily capacity for a named category across all resources */
+/* Helper: daily capacity for a named category across all resources
+   (each resource contributes at their own daily-hours rate — 24h for the
+   admin, DAILY_HRS for everyone else). */
 function catDailyCapacity(resources, catName){
   return resources.reduce((s,r) => {
+    const hrs = dailyHrsForMemberId(r.id);
     const allocs = r.allocations || {};
-    if (Object.keys(allocs).length) return s + (allocs[catName]||0)/100*DAILY_HRS;
+    if (Object.keys(allocs).length) return s + (allocs[catName]||0)/100*hrs;
     // legacy
     const cl = catName.toLowerCase();
-    if (cl.includes('simulat')) return s + (r.simPct||0)/100*DAILY_HRS;
-    if (cl.includes('model'))   return s + (r.modPct||0)/100*DAILY_HRS;
+    if (cl.includes('simulat')) return s + (r.simPct||0)/100*hrs;
+    if (cl.includes('model'))   return s + (r.modPct||0)/100*hrs;
     return s;
   }, 0);
 }
@@ -4091,7 +4108,7 @@ function computeResPlannedHrs(resourceRow, seqDates, fromDS, toDS){
           const pct = Object.keys(allocs).length > 0
             ? (allocs[hit.name] || 0)
             : (resourceRow.simPct||0) + (resourceRow.modPct||0);
-          total += pct / 100 * DAILY_HRS;
+          total += pct / 100 * dailyHrsForMemberId(resourceRow.id);
         }
       }
     }
@@ -4162,7 +4179,7 @@ async function calcSuggestedEnd(){
   const resources = getResourceAllocDataDyn();
   const catCapacity = {};
   schedCategoryRows.forEach(c => {
-    catCapacity[c.name] = resources.reduce((s,r) => s + (r.allocations?.[c.name]||0)/100*DAILY_HRS, 0);
+    catCapacity[c.name] = resources.reduce((s,r) => s + (r.allocations?.[c.name]||0)/100*dailyHrsForMemberId(r.id), 0);
   });
   const hasCap = schedCategoryRows.some(c => catCapacity[c.name] > 0);
   if (!hasCap){ showToast('Set resource allocation % first', 'warning'); return; }
@@ -4345,7 +4362,7 @@ function showFreedHoursDialog(entry){
   const freed = (entry.resources||[]).map(r => {
     const pct = Object.values(r.allocations||{}).reduce((s,v)=>s+v,0)
              || (r.simPct||0)+(r.modPct||0);
-    const daily = pct/100*DAILY_HRS;
+    const daily = pct/100*dailyHrsForMemberId(r.id);
     return { name: r.name, pct, daily };
   }).filter(r => r.pct > 0);
 
@@ -4523,7 +4540,8 @@ async function renderSchedule(){
   // Team utilisation: total committed daily hrs across all active entries / max possible daily hrs
   // Uses ALL categories (not just Simulation + Modelling)
   let totalCommittedDailyHrs = 0;
-  const maxDailyHrs = teamMembers.length * DAILY_HRS;  // e.g. 4 members × 8h = 32h/day
+  // Sum each member's own daily-hours capacity (admin = 24h, everyone else = DAILY_HRS)
+  const maxDailyHrs = teamMembers.reduce((s,m)=>s+dailyHrsForMemberId(m.id),0);
   list.innerHTML = _hasFilter && !sorted.length ? list.innerHTML : '';
 
   sorted.forEach(entry=>{
@@ -4560,7 +4578,7 @@ async function renderSchedule(){
         const pct = Object.keys(allocs).length > 0
           ? (_activeCatName ? (allocs[_activeCatName] || 0) : 0)
           : (r.simPct||0) + (r.modPct||0);
-        totalCommittedDailyHrs += pct / 100 * DAILY_HRS;
+        totalCommittedDailyHrs += pct / 100 * dailyHrsForMemberId(r.id);
       });
     }
 
@@ -4740,7 +4758,7 @@ async function renderSchedule(){
                 const _todayAllocPct = Object.keys(_rAllocs).length > 0
                   ? (_activeCatName ? (_rAllocs[_activeCatName] || 0) : 0)
                   : (r.simPct||0)+(r.modPct||0);
-                const planDay = _todayAllocPct / 100 * DAILY_HRS;
+                const planDay = _todayAllocPct / 100 * dailyHrsForMemberId(r.id);
 
                 // Date ranges for this week (Mon→Sun) and this month
                 const _now   = new Date();
@@ -4912,7 +4930,7 @@ async function checkBehindSchedule(){
       if (!mEmail) return null;
       const md      = (memberActualMap[entry.projectId]||{})[mEmail] ||
         {todaySim:0,todayMod:0,weeklySim:0,weeklyMod:0,monthlySim:0,monthlyMod:0};
-      const planDay   = (r.simPct+r.modPct)/100*DAILY_HRS;
+      const planDay   = (r.simPct+r.modPct)/100*dailyHrsForMemberId(r.id);
       const planWeek  = planDay * 6;
       const planMonth = planDay * 26;
       const todayL    = md.todaySim   + md.todayMod;
@@ -5242,7 +5260,7 @@ function renderResourceDailySchedule(){
       const pct = Object.keys(allocs).length > 0
         ? (activeCat ? (allocs[activeCat] || 0) : 0)
         : (r.simPct||0)+(r.modPct||0);
-      return { hrs: pct/100*DAILY_HRS, pct };
+      return { hrs: pct/100*dailyHrsForMemberId(tm.id), pct };
     });
     const totalHrs = cells.reduce((s,c)=>s+c.hrs,0);
     return { member:tm, cells, totalHrs };
@@ -5257,7 +5275,7 @@ function renderResourceDailySchedule(){
   }).join('');
 
   const bodyRows = memberRows.map(r => {
-    const over = r.totalHrs > DAILY_HRS + 0.01;
+    const over = r.totalHrs > dailyHrsForMemberId(r.member.id) + 0.01;
     const cells = r.cells.map(c => {
       if (c.hrs === 0) return `<td style="color:#ccc;text-align:center;padding:.3rem .5rem">—</td>`;
       return `<td style="text-align:center;padding:.3rem .5rem">
@@ -5295,7 +5313,7 @@ function renderResourceDailySchedule(){
         </table>
       </div>
       <div class="text-muted mt-1" style="font-size:.74rem">
-        ⚠ = over ${DAILY_HRS}h/day (resource overloaded — adjust allocations or project timelines).
+        ⚠ = over ${DAILY_HRS}h/day (${ADMIN_DAILY_HRS}h/day for admin) — resource overloaded, adjust allocations or project timelines.
         Set member emails in Settings for actual-vs-planned tracking.
       </div>
     </div>`;
@@ -6614,7 +6632,7 @@ function renderResourceCalendar(){
         if (!memberDayData[r.id][dateStr]) memberDayData[r.id][dateStr]={projs:[],totalPct:0};
         memberDayData[r.id][dateStr].projs.push({
           proj, catName:hit.name, pct,
-          plannedHrs:(pct/100*DAILY_HRS).toFixed(1)
+          plannedHrs:(pct/100*dailyHrsForMemberId(r.id)).toFixed(1)
         });
         memberDayData[r.id][dateStr].totalPct += pct;
       });
@@ -6635,6 +6653,17 @@ function renderResourceCalendar(){
     if (s.projectId) logMap[em][s.date].byProj[s.projectId]=(logMap[em][s.date].byProj[s.projectId]||0)+hrs;
   });
 
+  // The card-header status badge shows the member's booking for a single
+  // reference day. memberDayData is only populated for days in the MONTH
+  // CURRENTLY BEING VIEWED, so if "today" isn't in that month (e.g. viewing
+  // August while today is in July), looking up todayDS finds nothing and
+  // wrongly reads "Fully available" no matter how booked that month is.
+  // Fall back to the first day of the viewed month in that case.
+  const isViewingCurrentMonth = days.some(dd => dd.dateStr === todayDS);
+  const refDS  = isViewingCurrentMonth ? todayDS : days[0]?.dateStr;
+  const refLbl = isViewingCurrentMonth ? '' :
+    ` (${new Date(refDS).toLocaleDateString('en-IN',{day:'numeric',month:'short'})})`;
+
   // Availability summary
   renderRcAvailSummary(entryMeta, todayDS, visibleMembers);
 
@@ -6654,13 +6683,13 @@ function renderResourceCalendar(){
 
   visibleMembers.forEach(m=>{
     const mEmail  = (m.email||'').toLowerCase();
-    const logToday= logMap[mEmail]?.[todayDS];
-    const tdData  = memberDayData[m.id][todayDS];
+    const logToday= isViewingCurrentMonth ? logMap[mEmail]?.[todayDS] : null;
+    const tdData  = refDS ? memberDayData[m.id][refDS] : null;
     const tdPct   = tdData?.totalPct||0;
     const tdFree  = Math.max(0,100-tdPct);
-    const tdTxt   = tdFree>=100?'🟢 Fully available'
+    const tdTxt   = (tdFree>=100?'🟢 Fully available'
       : tdFree===0?'🔴 Fully booked'
-      : `🟡 ${tdFree}% available`;
+      : `🟡 ${tdFree}% available`) + refLbl;
     const tdLogTxt= logToday ? `&nbsp;·&nbsp;${logToday.total.toFixed(1)}h logged today` : '';
 
     // Calendar grid
