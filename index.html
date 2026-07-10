@@ -1331,6 +1331,7 @@ window.addEventListener('online', ()=>{
   setSyncStatus(true);
   showToast('Back online — syncing sessions…', 'info');
   syncOfflineQueue();
+  if (typeof syncClockOffset === 'function') syncClockOffset();
 });
 window.addEventListener('offline', ()=>{
   isOnline = false;
@@ -1396,6 +1397,15 @@ let S = {
 // Active timers — local only (per device)
 let activeTimers = loadTimers();
 let masterIv     = null;
+// This device's clock offset from the Firestore SERVER clock (ms). Positive
+// means our local clock is ahead of the server. Live-timer "lastStart"
+// values are written/read in server-equivalent time using this offset so
+// that cross-device elapsed calculations aren't thrown off by one user's
+// system clock being minutes off from another's (each device only trusts
+// its own clock relative to the shared server clock, never another
+// device's raw clock value).
+let clockOffsetMs = 0;
+let clockSyncIv   = null;  // interval handle for periodic clock re-sync
 let pendingStop  = null;  // {slotId, totalSecs, projectId, startISO, category}
 let editSessFullData = null;  // full Firestore doc data for the session currently open in the edit modal
 
@@ -1599,9 +1609,13 @@ function setupListeners(){
     populateProjectDropdowns();
   }, err=>console.warn('cfg listener',err));
 
-  // Live timers — single source of truth for all devices
+  // Live timers — single source of truth for all devices.
   unsubLive = db.collection('liveTimers').onSnapshot(snap => {
-    const allDocs = snap.docs.map(d => ({ firestoreId: d.id, ...d.data() }));
+    // Ignore transient clock-sync marker docs (see syncClockOffset) — they're
+    // not real timers and should never appear as a slot or a remote timer.
+    const allDocs = snap.docs
+      .map(d => ({ firestoreId: d.id, ...d.data() }))
+      .filter(lt => lt.state !== 'clocksync');
 
     // Own timers (any device) → merge into local activeTimers
     const mySlots = allDocs.filter(lt => lt.userId === currentUser?.uid);
@@ -1656,6 +1670,7 @@ function teardownListeners(){
   if (unsubSchedule) { unsubSchedule(); unsubSchedule=null; }
   if (unsubTeam)     { unsubTeam();     unsubTeam=null;     }
   if (unsubLeave)    { unsubLeave();    unsubLeave=null;    }
+  if (clockSyncIv)   { clearInterval(clockSyncIv); clockSyncIv=null; }
 }
 
 function setSyncStatus(online, pendingCount){
@@ -1831,6 +1846,14 @@ function onUserReady(){
   else setSyncStatus(false);
   // Check behind-schedule after a short delay (allow Firestore to load schedules)
   setTimeout(checkBehindSchedule, 3000);
+
+  // Calibrate this device's clock against the Firestore server clock so
+  // cross-device "Team Running Now" timers show accurate elapsed time
+  // regardless of this or other machines' system clock being off. Redo
+  // periodically to correct for drift over long sessions.
+  if (navigator.onLine) syncClockOffset();
+  if (clockSyncIv) clearInterval(clockSyncIv);
+  clockSyncIv = setInterval(()=>{ if (navigator.onLine) syncClockOffset(); }, 5*60*1000);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -2003,6 +2026,19 @@ function confirmAddSlot(){
       'warning'
     );
     sessModal.hide();
+    return;
+  }
+
+  // Block adding a duplicate slot for a project+category that's already on
+  // screen — running, paused, OR stopped. Only ADDING a new slot is blocked
+  // here; starting/resuming an existing slot is untouched, so a properly
+  // reset (finalized-stop) slot still starts fresh at 0 exactly as before.
+  const dupSlot = activeTimers.find(t => t.projectId === pid && (t.category||'') === (cat||''));
+  if (dupSlot){
+    showToast('⏱ A timer for this project & category already exists below — use its Start/Resume button instead of adding another.', 'warning');
+    sessModal.hide();
+    const el = document.getElementById('slot-'+dupSlot.id);
+    if (el) el.scrollIntoView({behavior:'smooth', block:'center'});
     return;
   }
 
@@ -2246,18 +2282,58 @@ function removeSlot(id){
    CROSS-DEVICE LIVE TIMER SYNC
 ═══════════════════════════════════════════════════════════════ */
 
-/* Calculate elapsed for a Firestore live timer (lastStart is ISO string) */
+/* Calibrate clockOffsetMs against the Firestore SERVER clock.
+   IMPORTANT: we cannot use the updatedAt on just any liveTimers doc for
+   this — a running timer's doc may not have been written in 40+ minutes,
+   so "how long ago was this doc confirmed" tells us nothing about our
+   clock skew right now (that was the bug: comparing Date.now() to a
+   stale confirmation produced errors as large as however long the timer
+   had been running). Instead we do our own fresh round trip: write a tiny
+   marker doc, immediately force a server (non-cached) read of it back,
+   and compare its resolved server timestamp to our local clock at that
+   moment (mid-point of the round trip, to roughly cancel out latency). */
+async function syncClockOffset(){
+  if (!CONFIGURED || !db || !currentUser) return;
+  try {
+    const beforeLocal = Date.now();
+    const ref = await db.collection('liveTimers').add({
+      userId    : currentUser.uid,
+      state     : 'clocksync',      // never rendered — filtered out everywhere (running/paused only)
+      updatedAt : firebase.firestore.FieldValue.serverTimestamp()
+    });
+    const snap = await ref.get({ source: 'server' });
+    const afterLocal = Date.now();
+    const ua = snap.data()?.updatedAt;
+    if (ua && typeof ua.toMillis === 'function'){
+      const midLocal = (beforeLocal + afterLocal) / 2;
+      clockOffsetMs = ua.toMillis() - midLocal;
+    }
+    ref.delete().catch(()=>{});
+  } catch(e){ console.warn('clock sync failed', e); }
+}
+
+/* Calculate elapsed for a Firestore live timer (lastStart is ISO string).
+   "now" is corrected to server-equivalent time (Date.now() + our clock
+   offset from the server) so a viewer whose system clock is off doesn't
+   see a wrong elapsed for another device's timer — both the writer and
+   the reader express time relative to the same Firestore server clock
+   instead of trusting each other's raw local clocks. */
 function getElapsedCrossDevice(lt){
   let el = lt.elapsed || 0;
   if (lt.state === 'running' && lt.lastStart){
-    el += (Date.now() - new Date(lt.lastStart).getTime()) / 1000;
+    const serverNow = Date.now() + clockOffsetMs;
+    el += (serverNow - new Date(lt.lastStart).getTime()) / 1000;
   }
   return Math.floor(el);
 }
 
-/* Write/update running timer to Firestore liveTimers collection */
+/* Write/update running timer to Firestore liveTimers collection.
+   lastStart is written in server-equivalent time (corrected by this
+   device's clockOffsetMs) so other devices can compute elapsed accurately
+   even if this device's system clock is skewed. */
 async function syncTimerToFirestore(t){
   if (!CONFIGURED || !db || !currentUser) return;
+  const correctedLastStart = t.lastStart ? t.lastStart + clockOffsetMs : null;
   const data = {
     userId      : currentUser.uid,
     userEmail   : currentUser.email || '',
@@ -2267,7 +2343,7 @@ async function syncTimerToFirestore(t){
     category    : t.category || '',
     state       : t.state,
     elapsed     : t.elapsed || 0,
-    lastStart   : t.lastStart ? new Date(t.lastStart).toISOString() : null,
+    lastStart   : correctedLastStart ? new Date(correctedLastStart).toISOString() : null,
     sessionStart: t.sessionStart || null,
     updatedAt   : firebase.firestore.FieldValue.serverTimestamp()
   };
