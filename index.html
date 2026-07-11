@@ -1406,6 +1406,7 @@ let masterIv     = null;
 // device's raw clock value).
 let clockOffsetMs = 0;
 let clockSyncIv   = null;  // interval handle for periodic clock re-sync
+let remoteRefreshIv = null;  // interval handle for the 30s guaranteed remote-timer refresh
 let pendingStop  = null;  // {slotId, totalSecs, projectId, startISO, category}
 let editSessFullData = null;  // full Firestore doc data for the session currently open in the edit modal
 
@@ -1621,15 +1622,18 @@ function setupListeners(){
     const mySlots = allDocs.filter(lt => lt.userId === currentUser?.uid);
     syncMySlots(mySlots);
 
-    // Other users' timers → read-only "Team Running Now"
+    // Other users' timers → read-only "Team Running Now".
+    // Only currently-RUNNING timers are ever shown to anyone but the owner —
+    // nobody (including the admin) should see someone else's paused or
+    // stopped timer, and the admin's own timer stays hidden from everyone
+    // else regardless of state (unchanged from before).
     liveTimers = allDocs.filter(lt =>
       lt.userId !== currentUser?.uid &&
+      lt.state === 'running' &&
       (isAdmin() || lt.userEmail !== ADMIN_EMAIL)
     );
 
     renderRemoteTimers();
-    if (liveTimers.some(lt => lt.state === 'running')) startMasterTick();
-    else checkStopMaster();
   }, err => {
     console.warn('liveTimers listener', err);
     showToast('⚠ Live sync error — check Firestore rules', 'danger');
@@ -1670,7 +1674,9 @@ function teardownListeners(){
   if (unsubSchedule) { unsubSchedule(); unsubSchedule=null; }
   if (unsubTeam)     { unsubTeam();     unsubTeam=null;     }
   if (unsubLeave)    { unsubLeave();    unsubLeave=null;    }
-  if (clockSyncIv)   { clearInterval(clockSyncIv); clockSyncIv=null; }
+  if (clockSyncIv)     { clearInterval(clockSyncIv);     clockSyncIv=null;     }
+  if (remoteRefreshIv) { clearInterval(remoteRefreshIv); remoteRefreshIv=null; }
+  stopMasterTick();
 }
 
 function setSyncStatus(online, pendingCount){
@@ -1854,6 +1860,17 @@ function onUserReady(){
   if (navigator.onLine) syncClockOffset();
   if (clockSyncIv) clearInterval(clockSyncIv);
   clockSyncIv = setInterval(()=>{ if (navigator.onLine) syncClockOffset(); }, 5*60*1000);
+
+  // Keep the 1s tick running for the whole session (see checkStopMaster) so
+  // remote "Team Running Now" timers update live instead of needing a
+  // manual page refresh.
+  startMasterTick();
+
+  // Belt-and-braces: force a full re-render of remote timers every 30s
+  // regardless of the 1s tick / snapshot listeners, so even if something
+  // else silently stalls, the displayed time is never more than ~30s stale.
+  if (remoteRefreshIv) clearInterval(remoteRefreshIv);
+  remoteRefreshIv = setInterval(renderRemoteTimers, 30*1000);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1945,11 +1962,14 @@ function stopMasterTick(){
   clearInterval(masterIv); masterIv=null;
 }
 
-function checkStopMaster(){
-  const anyRunning = activeTimers.some(t=>t.state==='running')
-    || liveTimers.some(lt=>lt.state==='running');
-  if (!anyRunning) stopMasterTick();
-}
+/* Previously stopped the 1s tick whenever nothing was "running" — but that
+   start/stop juggling across multiple call sites (snapshot handler,
+   pause/stop/remove) was fragile and is what caused remote timers to only
+   update on a manual page refresh instead of live. The tick is now started
+   once at login and left running for the whole session (cheap: it's just a
+   DOM text update, a no-op when nothing is running), so this is now a
+   deliberate no-op kept only so existing call sites don't need to change. */
+function checkStopMaster(){}
 
 function tickAll(){
   activeTimers.forEach(t=>{
@@ -2437,7 +2457,10 @@ function renderRemoteTimers(){
   const section = document.getElementById('remoteTimersSection');
   if (!cont || !section) return;
 
-  const visible = liveTimers.filter(lt => lt.state === 'running' || lt.state === 'paused');
+  // liveTimers is already filtered to state==='running' only (see the
+  // liveTimers listener) — nobody should see anyone else's paused or
+  // stopped timer, only what's actively running right now.
+  const visible = liveTimers;
   if (!visible.length){ section.classList.add('d-none'); return; }
   section.classList.remove('d-none');
   cont.innerHTML = '';
@@ -2445,8 +2468,8 @@ function renderRemoteTimers(){
   visible.forEach(lt => {
     const proj    = S.projects.find(p => p.id === lt.projectId);
     const elapsed = secsToHMS(getElapsedCrossDevice(lt));
-    const col     = lt.state === 'running' ? 'var(--success)' : 'var(--warning)';
-    const icon    = lt.state === 'running' ? 'bi-play-circle-fill' : 'bi-pause-circle-fill';
+    const col     = 'var(--success)';
+    const icon    = 'bi-play-circle-fill';
     const projNum = proj?.num || '';
     const subline = lt.category ? `${projNum} · ${lt.category}` : projNum;
 
