@@ -1600,7 +1600,7 @@ function setupListeners(){
     renderSlots();
     renderRemoteTimers();
     populateProjectDropdowns();
-  }, err=>console.warn('proj listener',err));
+  }, err=>{ console.warn('proj listener',err); showToast('⚠ Could not load projects — check Firestore rules', 'danger'); });
 
   // Settings
   unsubCfg = db.collection('settings').doc('main').onSnapshot(doc=>{
@@ -1644,15 +1644,32 @@ function setupListeners(){
     scheduleEntries = snap.docs.map(d => ({id: d.id, ...d.data()}));
     if (!document.getElementById('page-schedule').classList.contains('d-none')) renderSchedule();
     // (Projects tab removed — projects managed from Schedule tab)
-  }, err => console.warn('schedule listener', err));
+  }, err => { console.warn('schedule listener', err); showToast('⚠ Could not load schedule — check Firestore rules', 'danger'); });
 
   // Team members — real-time (fully dynamic: use whatever is in Firestore, no fallback defaults)
   unsubTeam = db.collection('appSettings').doc('teamMembers').onSnapshot(snap => {
     teamMembers = (snap.exists && Array.isArray(snap.data().members)) ? snap.data().members : [];
+    // Re-render whichever tab(s) are currently open so a late-arriving/updated
+    // snapshot (e.g. after reconnect, or if this listener resolves after the
+    // page was already shown) doesn't leave Team/Resources/Calendar looking
+    // empty until the user manually switches tabs.
     if (!document.getElementById('page-settings').classList.contains('d-none')) {
       renderTeamMembersSettings();
     }
-  }, err => console.warn('teamMembers listener', err));
+    if (!document.getElementById('page-team').classList.contains('d-none')) {
+      renderTeamBandwidth();
+      renderTeamEffort();
+    }
+    if (!document.getElementById('page-schedule').classList.contains('d-none')) {
+      renderResourceDailySchedule();
+    }
+    if (!document.getElementById('page-resources').classList.contains('d-none')) {
+      renderResourceCalendar();
+    }
+  }, err => {
+    console.warn('teamMembers listener', err);
+    showToast('⚠ Could not load team members — check Firestore rules', 'danger');
+  });
 
   // Leave plans — next 6 months (query by toDate >= today)
   const _todayStr = new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
