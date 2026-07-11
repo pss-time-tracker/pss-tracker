@@ -4232,14 +4232,15 @@ function catDailyCapacity(resources, catName){
 }
 
 /* Sum planned hours for a resource across all sequential categories active in [fromDS, toDS].
-   Iterates every calendar day in the range, skips weekends and approved leaves. */
+   Iterates every calendar day in the range, skips Sundays and approved leaves
+   (Saturday counts as a working day). */
 function computeResPlannedHrs(resourceRow, seqDates, fromDS, toDS){
   let total = 0;
   const cur = new Date(fromDS + 'T00:00:00');
   const end = new Date(toDS   + 'T00:00:00');
   while (cur <= end){
     const dow = cur.getDay();
-    if (dow !== 0 && dow !== 6){          // skip weekends
+    if (dow !== 0){                       // skip Sunday only — Saturday is a working day
       const ds = cur.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
       const onLeave = leavePlans.some(l =>
         l.memberId === resourceRow.id && l.status === 'approved' &&
@@ -4393,7 +4394,7 @@ async function calcSuggestedEnd(){
     // Count working days saved
     let saved = 0;
     const cur = new Date(newD); cur.setDate(cur.getDate()+1);
-    while (cur <= origD){ if (cur.getDay()!==0 && cur.getDay()!==6) saved++; cur.setDate(cur.getDate()+1); }
+    while (cur <= origD){ if (cur.getDay()!==0) saved++; cur.setDate(cur.getDate()+1); }
     const catNames = completedCats.map(c=>esc(c.name)).join(', ');
     return `
       <div class="d-flex align-items-start gap-2 p-2 mb-2"
@@ -5628,7 +5629,8 @@ async function saveEditSession(){
    FEATURE 2 — SEQUENTIAL SCHEDULING HELPERS
 ═══════════════════════════════════════════════════════════════ */
 
-/* Add n working days to startDate, skipping weekends and approved leave dates */
+/* Add n working days to startDate, skipping Sundays and approved leave dates
+   (Saturday counts as a working day). */
 function addWorkingDays(startDate, n, approvedLeaves = []){
   const leaveSet = new Set(approvedLeaves);
   const d = new Date(startDate);
@@ -5636,7 +5638,7 @@ function addWorkingDays(startDate, n, approvedLeaves = []){
   while (added < n){
     d.setDate(d.getDate()+1);
     const dow = d.getDay();
-    if (dow === 0 || dow === 6) continue;          // weekend
+    if (dow === 0) continue;                       // Sunday only
     const ds = d.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
     if (leaveSet.has(ds)) continue;                // approved leave
     added++;
@@ -5673,7 +5675,7 @@ function calcCatSequentialDates(cats, resources, startDateStr, leavePlansArr = [
         if (!l.fromDate || !l.toDate) return;
         const s = new Date(l.fromDate), e = new Date(l.toDate);
         for (let d = new Date(s); d <= e; d.setDate(d.getDate()+1)){
-          if (d.getDay() !== 0 && d.getDay() !== 6)   // weekdays only
+          if (d.getDay() !== 0)   // working days: Mon–Sat
             dates.push(d.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'}));
         }
       });
@@ -5682,8 +5684,8 @@ function calcCatSequentialDates(cats, resources, startDateStr, leavePlansArr = [
 
   const result  = [];
   let current   = new Date(startDateStr || new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'}));
-  // Advance past initial weekends only (first category handles its own leaves)
-  while (current.getDay() === 0 || current.getDay() === 6) current.setDate(current.getDate()+1);
+  // Advance past an initial Sunday only (first category handles its own leaves)
+  while (current.getDay() === 0) current.setDate(current.getDate()+1);
 
   const todayStr2 = new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
   let hasOverduePredecessor = false; // tracks if any prior category is overdue/incomplete
@@ -5741,13 +5743,13 @@ function calcCatSequentialDates(cats, resources, startDateStr, leavePlansArr = [
     if (isOverdue) hasOverduePredecessor = true;
 
     // Transition: use actualEndDate so late completions push subsequent starts forward.
-    // Only skip weekends in the gap — next category will handle its own leaves.
+    // Only skip Sunday in the gap — next category will handle its own leaves.
     if (days > 0){
-      current = addWorkingDays(actualEndDate, 1, []);   // [] = weekends only
+      current = addWorkingDays(actualEndDate, 1, []);   // [] = Sunday only
     } else {
       current = new Date(actualEndDate);
       current.setDate(current.getDate()+1);
-      while (current.getDay()===0 || current.getDay()===6) current.setDate(current.getDate()+1);
+      while (current.getDay()===0) current.setDate(current.getDate()+1);
     }
   });
   return result;
@@ -5788,7 +5790,7 @@ function getApprovedLeaveDatesForResources(resourceIds){
       if (!l.fromDate || !l.toDate) return;
       const s = new Date(l.fromDate), e = new Date(l.toDate);
       for (let d = new Date(s); d <= e; d.setDate(d.getDate()+1)){
-        if (d.getDay() !== 0 && d.getDay() !== 6)
+        if (d.getDay() !== 0)
           dates.push(d.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'}));
       }
     });
@@ -5989,7 +5991,7 @@ function renderTeamBandwidth(){
                 let wdays = 0;
                 const s = new Date(l.fromDate), e = new Date(l.toDate);
                 for (let d = new Date(s); d <= e; d.setDate(d.getDate()+1)){
-                  if (d.getDay()!==0 && d.getDay()!==6) wdays++;
+                  if (d.getDay()!==0) wdays++;
                 }
                 // Can cancel: admin always; own pending leaves
                 const canCancel = isAdmin() || (l.submittedBy === currentUser?.email && l.status === 'pending');
@@ -6730,7 +6732,7 @@ function renderResourceCalendar(){
   for (let d=1; d<=daysInMonth; d++){
     const ds  = `${rcYear}-${pad(rcMonth+1)}-${pad(d)}`;
     const dow = new Date(rcYear,rcMonth,d).getDay();
-    days.push({d, dateStr:ds, isWeekend: dow===0||dow===6});
+    days.push({d, dateStr:ds, isWeekend: dow===0});
   }
 
   // Admin's personal/private schedule & calendar must not be visible to other
