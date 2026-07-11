@@ -1655,7 +1655,7 @@ function setupListeners(){
   }, err => console.warn('teamMembers listener', err));
 
   // Leave plans — next 6 months (query by toDate >= today)
-  const _todayStr = new Date().toLocaleDateString('en-CA');
+  const _todayStr = new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
   unsubLeave = db.collection('leavePlans')
     .where('toDate', '>=', _todayStr)
     .onSnapshot(snap => {
@@ -1773,7 +1773,7 @@ window.addEventListener('DOMContentLoaded', ()=>{
 
   // Date header
   document.getElementById('hdrDate').textContent = new Date().toLocaleDateString('en-IN',
-    {weekday:'short',day:'numeric',month:'short',year:'numeric'});
+    {weekday:'short',day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Kolkata'});
 
   // Log date default = today
   document.getElementById('logDate').value = todayStr();
@@ -1904,8 +1904,8 @@ function showPage(page){
    new Date().toISOString().slice(0,10) — that gives the UTC date, which
    for IST (UTC+5:30) is the wrong (previous) day for anything logged
    between 12:00am and 5:29am local time. */
-function todayStr(){ return new Date().toLocaleDateString('en-CA') }
-function toLocalDateStr(d){ return new Date(d).toLocaleDateString('en-CA') }
+function todayStr(){ return new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'}) }
+function toLocalDateStr(d){ return new Date(d).toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'}) }
 
 function secsToHMS(s){
   s=Math.max(0,Math.floor(s));
@@ -1937,7 +1937,7 @@ function splitSessionByDay(startISO, endISO){
       segments.push({
         startTime : curStart.toISOString(),
         endTime   : segEnd.toISOString(),
-        date      : curStart.toLocaleDateString('en-CA'),
+        date      : curStart.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'}),
         duration  : dur
       });
     }
@@ -2189,7 +2189,7 @@ function stopSlot(id){
   // Show initial start → end preview
   const sISO = pendingStop.startISO;
   const eISO = new Date(new Date(sISO).getTime() + totalSecs * 1000).toISOString();
-  const fmt  = d => new Date(d).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+  const fmt  = d => new Date(d).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'});
   document.getElementById('stopEndPreview').textContent = `${fmt(sISO)} → ${fmt(eISO)}`;
 
   // Small delay ensures DOM settles before modal opens
@@ -2332,28 +2332,35 @@ async function syncClockOffset(){
   } catch(e){ console.warn('clock sync failed', e); }
 }
 
-/* Calculate elapsed for a Firestore live timer (lastStart is ISO string).
-   "now" is corrected to server-equivalent time (Date.now() + our clock
-   offset from the server) so a viewer whose system clock is off doesn't
-   see a wrong elapsed for another device's timer — both the writer and
-   the reader express time relative to the same Firestore server clock
-   instead of trusting each other's raw local clocks. */
+/* Calculate elapsed for a Firestore live timer. lastStart is the database's
+   own serverTimestamp (see syncTimerToFirestore) — the writer's local clock
+   never enters into it. The only remaining clock estimate is on our own
+   (reading) side: "now" is corrected to server-equivalent time using our
+   own clockOffsetMs, refreshed periodically by syncClockOffset(). */
 function getElapsedCrossDevice(lt){
   let el = lt.elapsed || 0;
-  if (lt.state === 'running' && lt.lastStart){
-    const serverNow = Date.now() + clockOffsetMs;
-    el += (serverNow - new Date(lt.lastStart).getTime()) / 1000;
+  if (lt.state === 'running'){
+    const lastStartMs = timestampToMs(lt.lastStart);
+    // lastStart can be briefly null right after the writer's own optimistic
+    // add(), before serverTimestamp() resolves — skip this tick rather than
+    // showing a bogus value; the next snapshot will have the real value.
+    if (lastStartMs != null){
+      const serverNow = Date.now() + clockOffsetMs;
+      el += (serverNow - lastStartMs) / 1000;
+    }
   }
   return Math.floor(el);
 }
 
 /* Write/update running timer to Firestore liveTimers collection.
-   lastStart is written in server-equivalent time (corrected by this
-   device's clockOffsetMs) so other devices can compute elapsed accurately
-   even if this device's system clock is skewed. */
+   lastStart is written using Firestore's serverTimestamp() — i.e. the
+   database's own clock, not an estimate derived from this device's clock —
+   so other devices reading it never depend on how accurate THIS writer's
+   clock (or our clock-skew estimate of it) happens to be. This is the
+   "standard time" reference the whole app anchors to, per-write, instead
+   of trusting any one machine's OS clock. */
 async function syncTimerToFirestore(t){
   if (!CONFIGURED || !db || !currentUser) return;
-  const correctedLastStart = t.lastStart ? t.lastStart + clockOffsetMs : null;
   const data = {
     userId      : currentUser.uid,
     userEmail   : currentUser.email || '',
@@ -2363,7 +2370,7 @@ async function syncTimerToFirestore(t){
     category    : t.category || '',
     state       : t.state,
     elapsed     : t.elapsed || 0,
-    lastStart   : correctedLastStart ? new Date(correctedLastStart).toISOString() : null,
+    lastStart   : t.state === 'running' ? firebase.firestore.FieldValue.serverTimestamp() : null,
     sessionStart: t.sessionStart || null,
     updatedAt   : firebase.firestore.FieldValue.serverTimestamp()
   };
@@ -2376,6 +2383,17 @@ async function syncTimerToFirestore(t){
       saveTimers();  // persist firestoreId so we can update/delete it later
     }
   } catch(e){ console.warn('liveTimers sync failed', e); }
+}
+
+/* lastStart on a liveTimers doc may be a Firestore Timestamp (serverTimestamp,
+   possibly still null/pending on the writer's own optimistic cache) or,
+   for any older docs, an ISO string. Normalize to epoch ms, or null if not
+   yet resolved. */
+function timestampToMs(v){
+  if (!v) return null;
+  if (typeof v.toMillis === 'function') return v.toMillis();
+  const ms = new Date(v).getTime();
+  return isNaN(ms) ? null : ms;
 }
 
 /* Remove timer from Firestore liveTimers (paused / stopped / removed) */
@@ -2404,7 +2422,13 @@ function syncMySlots(firestoreSlots){
     if (local) {
       // Don't clobber a timer we're currently stopping (pendingStop guard)
       if (pendingStop && pendingStop.slotId === local.id) return;
-      const newLastStart = fs.lastStart ? new Date(fs.lastStart).getTime() : null;
+      const resolvedLastStart = timestampToMs(fs.lastStart);
+      // lastStart is briefly null right after our own optimistic write,
+      // before serverTimestamp() resolves — keep the existing local value
+      // in that window instead of freezing the display at null.
+      const newLastStart = (fs.state === 'running' && resolvedLastStart == null)
+        ? local.lastStart
+        : resolvedLastStart;
       // Only update if something actually changed
       if (local.firestoreId !== fs.firestoreId ||
           local.state       !== fs.state       ||
@@ -2428,7 +2452,7 @@ function syncMySlots(firestoreSlots){
         category    : fs.category || '',
         state       : fs.state,
         elapsed     : fs.elapsed || 0,
-        lastStart   : fs.lastStart ? new Date(fs.lastStart).getTime() : null,
+        lastStart   : timestampToMs(fs.lastStart),
         sessionStart: fs.sessionStart || null
       });
       changed = true;
@@ -2707,10 +2731,10 @@ async function renderSessionLog(){
     const proj    = S.projects.find(p=>p.id===s.projectId);
     const div     = document.createElement('div');
     div.className = 'sess-row';
-    const start   = s.startTime ? new Date(s.startTime).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}) : '';
-    const end     = s.endTime   ? new Date(s.endTime).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}) : '';
-    const startDate = s.startTime ? new Date(s.startTime).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}) : '';
-    const endDate   = s.endTime   ? new Date(s.endTime).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}) : '';
+    const start   = s.startTime ? new Date(s.startTime).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'}) : '';
+    const end     = s.endTime   ? new Date(s.endTime).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'}) : '';
+    const startDate = s.startTime ? new Date(s.startTime).toLocaleDateString('en-IN',{day:'2-digit',month:'short',timeZone:'Asia/Kolkata'}) : '';
+    const endDate   = s.endTime   ? new Date(s.endTime).toLocaleDateString('en-IN',{day:'2-digit',month:'short',timeZone:'Asia/Kolkata'}) : '';
     const isMultiDay = startDate && endDate && startDate !== endDate;
     const canEdit   = isAdmin() || s.userId === currentUser?.uid;
     const editBtn   = canEdit
@@ -2960,8 +2984,8 @@ function showSessionsDrilldown(){
   sorted.forEach(s=>{
     const proj    = S.projects.find(p=>p.id===s.projectId);
     const projLbl = proj ? `${proj.num} – ${proj.name}` : (s.projectId||'Unknown');
-    const dateStr = s.startTime ? new Date(s.startTime).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : (s.date||'');
-    const timeStr = s.startTime ? new Date(s.startTime).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}) : '';
+    const dateStr = s.startTime ? new Date(s.startTime).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric',timeZone:'Asia/Kolkata'}) : (s.date||'');
+    const timeStr = s.startTime ? new Date(s.startTime).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'}) : '';
     const dur     = secsToHMS(s.duration||0);
     const who     = s.userName || s.userEmail || '';
     tbody.innerHTML += `
@@ -3258,7 +3282,7 @@ async function downloadDashboardExcel(){
 
   const cur  = S.settings.currency || '₹';
   const fmtN = v => v != null && v !== '' ? +parseFloat(v).toFixed(2) : '';
-  const fmtDT = iso => iso ? new Date(iso).toLocaleString('en-IN', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+  const fmtDT = iso => iso ? new Date(iso).toLocaleString('en-IN', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'}) : '';
 
   // ── Per-project & per-resource aggregation ─────────────────────────
   // projAgg[pid] = { totalHrs, sessions, byMember:{email→{name,hrs,cats:{cat→hrs}}} }
@@ -3463,8 +3487,8 @@ async function exportAllLogs(period){
       const proj = S.projects.find(p=>p.id===s.projectId);
       return [
         s.date||'',
-        s.startTime ? new Date(s.startTime).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}) : '',
-        s.endTime   ? new Date(s.endTime).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})   : '',
+        s.startTime ? new Date(s.startTime).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'}) : '',
+        s.endTime   ? new Date(s.endTime).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'})   : '',
         proj?.num  || '',
         proj?.name || s.projectId || '',
         s.category  || '',
@@ -3477,7 +3501,7 @@ async function exportAllLogs(period){
     const periodLabel = {'1month':'Last_1_Month','3months':'Last_3_Months','6months':'Last_6_Months','1year':'Last_1_Year','all':'All_Time'}[period]||period;
     const csv = [
       `"PSS Time Tracker — Session Log Export (${periodLabel.replace(/_/g,' ')})"`,
-      `"Exported: ${new Date().toLocaleString('en-IN')}  |  Total sessions: ${sessions.length}"`,
+      `"Exported: ${new Date().toLocaleString('en-IN', {timeZone:'Asia/Kolkata'})}  |  Total sessions: ${sessions.length}"`,
       '',
       csvLine(headers),
       ...rows.map(csvLine)
@@ -3506,7 +3530,7 @@ function onDurationEdit(){
   if (secs !== null && secs > 0){
     pendingStop.totalSecs = secs;
     const endTime = new Date(new Date(pendingStop.startISO).getTime() + secs * 1000);
-    const fmt = d => new Date(d).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+    const fmt = d => new Date(d).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'});
     document.getElementById('stopEndPreview').textContent =
       `${fmt(pendingStop.startISO)} → ${fmt(endTime)}`;
   }
@@ -3883,7 +3907,7 @@ async function openCatStatusEditor(schedId, catName){
   const opts = ['Not Started','In Progress','Completed','On Hold','Cancelled'];
   const newStatus = opts[(opts.indexOf(curStatus) + 1) % opts.length];
   if (!confirm(`Change "${catName}" status from "${curStatus}" → "${newStatus}"?`)) return;
-  const todayDS = new Date().toLocaleDateString('en-CA');
+  const todayDS = new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
   const updatedCats = (entry.categories||[]).map(c => {
     if (c.name !== catName) return c;
     const updated = {...c, status: newStatus};
@@ -3959,7 +3983,7 @@ function getMemberConflictRows(memberId, excludeEntryId){
       if (!pct) return null;
       const proj  = S.projects.find(p => p.id === e.projectId);
       const endLbl = e.endDate
-        ? new Date(e.endDate).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})
+        ? new Date(e.endDate).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Kolkata'})
         : 'no end date';
       return { pct, proj, endLbl, entryId: e.id };
     }).filter(Boolean);
@@ -3976,7 +4000,7 @@ function showConflictWarning(memberName, existingPct, memberId, excludeEntryId){
   const rows = getMemberConflictRows(memberId, excludeEntryId);
   const latestEnd = getMemberLatestEndDate(memberId, excludeEntryId);
   const latestLbl = latestEnd
-    ? new Date(latestEnd).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})
+    ? new Date(latestEnd).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Kolkata'})
     : null;
 
   document.getElementById('conflictBody').innerHTML = `
@@ -4192,7 +4216,7 @@ function computeResPlannedHrs(resourceRow, seqDates, fromDS, toDS){
   while (cur <= end){
     const dow = cur.getDay();
     if (dow !== 0 && dow !== 6){          // skip weekends
-      const ds = cur.toLocaleDateString('en-CA');
+      const ds = cur.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
       const onLeave = leavePlans.some(l =>
         l.memberId === resourceRow.id && l.status === 'approved' &&
         ds >= l.fromDate && ds <= l.toDate
@@ -4227,7 +4251,7 @@ function getSchedStatus(entry, actualHrs){
     if (!entry.endDate){
       return { key:'exhausted', label:'Exhausted', actualPct, totalHrs, actualHrs };
     }
-    const todayStrEx = new Date().toLocaleDateString('en-CA');
+    const todayStrEx = new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
     const daysLeftEx = Math.ceil((new Date(entry.endDate) - new Date(todayStrEx)) / 86400000);
     return { key:'exhausted', label:'Exhausted', actualPct, totalHrs, actualHrs,
              plannedPct: todayStrEx >= entry.endDate ? 100 : Math.min(100,(new Date(todayStrEx)-new Date(entry.startDate||todayStrEx))/(new Date(entry.endDate)-new Date(entry.startDate||todayStrEx))*100||0),
@@ -4241,7 +4265,7 @@ function getSchedStatus(entry, actualHrs){
   // Use LOCAL date strings (en-CA = YYYY-MM-DD) to avoid UTC midnight timezone shift.
   // e.g. IST is UTC+5:30 so new Date('2026-07-06') midnight UTC = 05:30 IST,
   // making "today" appear to be still July 5 when the user is already on July 6.
-  const todayStr = new Date().toLocaleDateString('en-CA'); // "YYYY-MM-DD" in local tz
+  const todayStr = new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'}); // "YYYY-MM-DD" in local tz
   const startStr = entry.startDate || todayStr;
   const endStr   = entry.endDate;
 
@@ -4296,7 +4320,7 @@ async function calcSuggestedEnd(){
   }
 
   const startVal2    = document.getElementById('schedStart').value;
-  const startDateStr = startVal2 || new Date().toLocaleDateString('en-CA');
+  const startDateStr = startVal2 || new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
 
   // Build adjusted category rows: remaining = planned − already logged
   // calcCatSequentialDates will handle per-category leave filtering internally
@@ -4331,7 +4355,7 @@ async function calcSuggestedEnd(){
   const lastEnd = seqDates.length ? seqDates[seqDates.length-1].endStr : startDateStr;
   document.getElementById('schedEnd').value = lastEnd;
 
-  const fmtDate = ds => new Date(ds).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+  const fmtDate = ds => new Date(ds).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Kolkata'});
 
   // Check for early/late completion vs original project end date
   const origEnd      = existingEntry2?.endDate || null;
@@ -4426,7 +4450,7 @@ function calcSuggestedStart(){
   const box = document.getElementById('schedSuggestion');
   box.classList.remove('d-none');
   box.innerHTML = `<i class="bi bi-person-check me-1"></i>
-    Suggested start: <strong>${d.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}</strong>
+    Suggested start: <strong>${d.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Kolkata'})}</strong>
     — the day after <strong>${esc(busyMember)}</strong>'s current 100%-allocation ends.
     <div class="mt-1" style="font-size:.77rem;color:#555">
       Review each assigned member's projects and adjust allocations if needed before finalising dates.
@@ -4660,10 +4684,10 @@ async function renderSchedule(){
     const urgColor   = {High:'var(--danger)',Medium:'var(--warning)',Low:'var(--success)'}[entry.urgency]||'#888';
 
     // ── Pre-compute sequential dates (needed for both bandwidth calc and card rendering) ──
-    const _startDS  = entry.startDate || new Date().toLocaleDateString('en-CA');
+    const _startDS  = entry.startDate || new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
     const _seqDates = cats.length ? calcCatSequentialDates(cats, resources, _startDS, leavePlans) : [];
     // Which category is active TODAY? (sequential — overdue cats stay active until marked Completed)
-    const _todayDS       = new Date().toLocaleDateString('en-CA');
+    const _todayDS       = new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
     const _activeCatName = getActiveCatFromSeqDates(_seqDates, _todayDS);
 
     // Only count active entries in summary cards
@@ -4739,7 +4763,7 @@ async function renderSchedule(){
       ? Math.round((new Date(_calcEnd) - new Date(entry.endDate)) / 86400000) : 0;
     const _endDrift = _calcEnd && entry.endDate && _calcEnd !== entry.endDate;
 
-    const fmtDS = ds => new Date(ds).toLocaleDateString('en-IN',{day:'numeric',month:'short'});
+    const fmtDS = ds => new Date(ds).toLocaleDateString('en-IN',{day:'numeric',month:'short',timeZone:'Asia/Kolkata'});
 
     const _catStatusColor = {'Not Started':'#546e7a','In Progress':'#1565c0','Completed':'#2e7d32','On Hold':'#e65100','Cancelled':'#9e9e9e'};
     const _catStatusBg    = {'Not Started':'#eceff1','In Progress':'#e3f2fd','Completed':'#e8f5e9','On Hold':'#fff3e0','Cancelled':'#f5f5f5'};
@@ -4866,7 +4890,7 @@ async function renderSchedule(){
                 const _wkSun = new Date(_wkMon); _wkSun.setDate(_wkMon.getDate()+6);
                 const _mo1   = new Date(_now.getFullYear(), _now.getMonth(), 1);
                 const _moEnd = new Date(_now.getFullYear(), _now.getMonth()+1, 0);
-                const toDS2  = d => d.toLocaleDateString('en-CA');
+                const toDS2  = d => d.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
                 const planWeek  = computeResPlannedHrs(r, _seqDates, toDS2(_wkMon), toDS2(_wkSun));
                 const planMonth = computeResPlannedHrs(r, _seqDates, toDS2(_mo1),   toDS2(_moEnd));
 
@@ -4931,8 +4955,8 @@ async function renderSchedule(){
         </div>
         <div class="text-end" style="min-width:130px">
           <div style="font-size:.8rem;color:#777"><i class="bi bi-calendar-event me-1"></i>
-            ${entry.startDate ? new Date(entry.startDate).toLocaleDateString('en-IN',{day:'numeric',month:'short'}) : '—'}
-            ${entry.endDate   ? ' → '+new Date(entry.endDate).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : ''}
+            ${entry.startDate ? new Date(entry.startDate).toLocaleDateString('en-IN',{day:'numeric',month:'short',timeZone:'Asia/Kolkata'}) : '—'}
+            ${entry.endDate   ? ' → '+new Date(entry.endDate).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Kolkata'}) : ''}
           </div>
           ${status.plannedPct !== undefined ? `
             <div class="mt-1" style="font-size:.78rem;color:#999">
@@ -5058,7 +5082,7 @@ async function checkBehindSchedule(){
       <div class="fw-semibold">${esc(proj?.num||'')} ${esc(proj?.name||'Unknown')}</div>
       <div style="font-size:.8rem;color:#666" class="mb-1">
         Overall: ${st.plannedPct?.toFixed(0)||'?'}% time elapsed · ${st.actualPct.toFixed(0)}% hours done
-        ${entry.endDate ? ' · Due: '+new Date(entry.endDate).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : ''}
+        ${entry.endDate ? ' · Due: '+new Date(entry.endDate).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Kolkata'}) : ''}
       </div>
       ${memberRows.length ? `
       <table style="width:100%;border-collapse:collapse">
@@ -5340,7 +5364,7 @@ function renderResourceDailySchedule(){
   if (!active.length){ div.innerHTML = ''; return; }
 
   // Pre-compute active category per entry for today (sequential — one at a time)
-  const todayDStr = new Date().toLocaleDateString('en-CA');
+  const todayDStr = new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
   const activeEntryMeta = active.map(e => {
     const eCats  = e.categories?.length ? e.categories : [];
     const eRes   = e.resources || [];
@@ -5470,8 +5494,8 @@ async function openEditSession(sessId){
   // Parse startTime
   if (s.startTime){
     const dt = new Date(s.startTime);
-    document.getElementById('editSessStartDate').value = dt.toLocaleDateString('en-CA');
-    document.getElementById('editSessStartTime').value = dt.toLocaleTimeString('en-CA',{hour:'2-digit',minute:'2-digit',hour12:false});
+    document.getElementById('editSessStartDate').value = dt.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
+    document.getElementById('editSessStartTime').value = dt.toLocaleTimeString('en-CA',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Kolkata'});
   } else {
     document.getElementById('editSessStartDate').value = s.date || '';
     document.getElementById('editSessStartTime').value = '';
@@ -5480,8 +5504,8 @@ async function openEditSession(sessId){
   // Parse endTime
   if (s.endTime){
     const dt2 = new Date(s.endTime);
-    document.getElementById('editSessEndDate').value = dt2.toLocaleDateString('en-CA');
-    document.getElementById('editSessEndTime').value = dt2.toLocaleTimeString('en-CA',{hour:'2-digit',minute:'2-digit',hour12:false});
+    document.getElementById('editSessEndDate').value = dt2.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
+    document.getElementById('editSessEndTime').value = dt2.toLocaleTimeString('en-CA',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Kolkata'});
   } else {
     document.getElementById('editSessEndDate').value = s.date || '';
     document.getElementById('editSessEndTime').value = '';
@@ -5589,7 +5613,7 @@ function addWorkingDays(startDate, n, approvedLeaves = []){
     d.setDate(d.getDate()+1);
     const dow = d.getDay();
     if (dow === 0 || dow === 6) continue;          // weekend
-    const ds = d.toLocaleDateString('en-CA');
+    const ds = d.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
     if (leaveSet.has(ds)) continue;                // approved leave
     added++;
   }
@@ -5626,18 +5650,18 @@ function calcCatSequentialDates(cats, resources, startDateStr, leavePlansArr = [
         const s = new Date(l.fromDate), e = new Date(l.toDate);
         for (let d = new Date(s); d <= e; d.setDate(d.getDate()+1)){
           if (d.getDay() !== 0 && d.getDay() !== 6)   // weekdays only
-            dates.push(d.toLocaleDateString('en-CA'));
+            dates.push(d.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'}));
         }
       });
     return [...new Set(dates)];
   }
 
   const result  = [];
-  let current   = new Date(startDateStr || new Date().toLocaleDateString('en-CA'));
+  let current   = new Date(startDateStr || new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'}));
   // Advance past initial weekends only (first category handles its own leaves)
   while (current.getDay() === 0 || current.getDay() === 6) current.setDate(current.getDate()+1);
 
-  const todayStr2 = new Date().toLocaleDateString('en-CA');
+  const todayStr2 = new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
   let hasOverduePredecessor = false; // tracks if any prior category is overdue/incomplete
 
   cats.forEach(c => {
@@ -5655,8 +5679,8 @@ function calcCatSequentialDates(cats, resources, startDateStr, leavePlansArr = [
       catEnd = new Date(catStart);
     }
 
-    const catStartStr   = catStart.toLocaleDateString('en-CA');
-    const plannedEndStr = catEnd.toLocaleDateString('en-CA');
+    const catStartStr   = catStart.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
+    const plannedEndStr = catEnd.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
     const catStatus     = c.status || 'Not Started';
 
     // For Completed categories: use actual completedDate if it differs from planned end
@@ -5741,7 +5765,7 @@ function getApprovedLeaveDatesForResources(resourceIds){
       const s = new Date(l.fromDate), e = new Date(l.toDate);
       for (let d = new Date(s); d <= e; d.setDate(d.getDate()+1)){
         if (d.getDay() !== 0 && d.getDay() !== 6)
-          dates.push(d.toLocaleDateString('en-CA'));
+          dates.push(d.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'}));
       }
     });
   return [...new Set(dates)];
@@ -5772,10 +5796,10 @@ function renderTeamBandwidth(){
     const proj    = S.projects.find(p => p.id === e.projectId);
     const eCats   = e.categories?.length ? e.categories : [];
     const eRes    = e.resources || [];
-    const eStart  = e.startDate || new Date().toLocaleDateString('en-CA');
+    const eStart  = e.startDate || new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
     // Sequential dates → determine which single category is active today
     const eSeq    = eCats.length ? calcCatSequentialDates(eCats, eRes, eStart, leavePlans) : [];
-    const todayStr= new Date().toLocaleDateString('en-CA');
+    const todayStr= new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
     const activeCat = getActiveCatFromSeqDates(eSeq, todayStr);
     eRes.forEach(r => {
       if (!memberOccupied.hasOwnProperty(r.id)) return;
@@ -5800,7 +5824,7 @@ function renderTeamBandwidth(){
     const barColor = over ? 'var(--danger)' : occ >= 80 ? 'var(--warning)' : 'var(--success)';
 
     // Upcoming approved leaves for this member
-    const today = new Date().toLocaleDateString('en-CA');
+    const today = new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
     const myLeaves = leavePlans
       .filter(l => l.memberId === m.id && l.status === 'approved' && l.toDate >= today)
       .sort((a,b) => a.fromDate.localeCompare(b.fromDate));
@@ -5809,8 +5833,8 @@ function renderTeamBandwidth(){
       ? `<div class="mt-2" style="font-size:.75rem;color:#e65100">
            <i class="bi bi-calendar-x me-1"></i>
            <strong>Approved leaves:</strong> ${myLeaves.map(l => {
-             const from = new Date(l.fromDate).toLocaleDateString('en-IN',{day:'numeric',month:'short'});
-             const to   = new Date(l.toDate).toLocaleDateString('en-IN',{day:'numeric',month:'short'});
+             const from = new Date(l.fromDate).toLocaleDateString('en-IN',{day:'numeric',month:'short',timeZone:'Asia/Kolkata'});
+             const to   = new Date(l.toDate).toLocaleDateString('en-IN',{day:'numeric',month:'short',timeZone:'Asia/Kolkata'});
              return from === to ? from : `${from}–${to}`;
            }).join(', ')}
          </div>`
@@ -5886,8 +5910,8 @@ function renderTeamBandwidth(){
             <tbody>
               ${allPending.map(l => {
                 const m = teamMembers.find(x => x.id === l.memberId);
-                const fmtD = ds => new Date(ds).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
-                const subDate = l.submittedAt?.toDate ? l.submittedAt.toDate().toLocaleDateString('en-IN') : '—';
+                const fmtD = ds => new Date(ds).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric',timeZone:'Asia/Kolkata'});
+                const subDate = l.submittedAt?.toDate ? l.submittedAt.toDate().toLocaleDateString('en-IN', {timeZone:'Asia/Kolkata'}) : '—';
                 return `<tr>
                   <td><span class="fw-semibold">${esc(m?.name||l.memberName||'?')}</span></td>
                   <td>${esc(fmtD(l.fromDate))}</td>
@@ -5914,9 +5938,9 @@ function renderTeamBandwidth(){
 
   // ── All leaves (next 6 months) ────────────────────────────────────
   const allEl  = document.getElementById('allLeavesSection');
-  const today2 = new Date().toLocaleDateString('en-CA');
+  const today2 = new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
   const sixMo  = new Date(); sixMo.setMonth(sixMo.getMonth()+6);
-  const sixMoStr = sixMo.toLocaleDateString('en-CA');
+  const sixMoStr = sixMo.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
   const upcoming = leavePlans
     .filter(l => l.toDate >= today2 && l.fromDate <= sixMoStr)
     .sort((a,b) => a.fromDate.localeCompare(b.fromDate));
@@ -5937,7 +5961,7 @@ function renderTeamBandwidth(){
             <tbody>
               ${upcoming.map(l => {
                 const m   = teamMembers.find(x => x.id === l.memberId);
-                const fmtD = ds => new Date(ds).toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
+                const fmtD = ds => new Date(ds).toLocaleDateString('en-IN',{day:'2-digit',month:'short',timeZone:'Asia/Kolkata'});
                 let wdays = 0;
                 const s = new Date(l.fromDate), e = new Date(l.toDate);
                 for (let d = new Date(s); d <= e; d.setDate(d.getDate()+1)){
@@ -6003,7 +6027,7 @@ function openAddLeave(memberId, memberName){
   // Default dates: tomorrow → tomorrow
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate()+1);
-  const tStr = tomorrow.toLocaleDateString('en-CA');
+  const tStr = tomorrow.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
   document.getElementById('leaveFromDate').value = tStr;
   document.getElementById('leaveToDate').value   = tStr;
   document.getElementById('leaveReason').value   = '';
@@ -6024,7 +6048,7 @@ async function saveLeave(){
   // Validate within next 6 months
   const sixMoStr = (() => {
     const d = new Date(); d.setMonth(d.getMonth()+6);
-    return d.toLocaleDateString('en-CA');
+    return d.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
   })();
   if (fromDate > sixMoStr){ showToast('Leave must be within the next 6 months', 'warning'); return; }
 
@@ -6366,7 +6390,7 @@ function _getEffortPeriods(){
 
   // Month
   const monthStart = `${now.getFullYear()}-${yStr(now.getMonth()+1)}-01`;
-  const monthLabel = now.toLocaleDateString('en-IN', {month:'long', year:'numeric'});
+  const monthLabel = now.toLocaleDateString('en-IN', {month:'long', year:'numeric', timeZone:'Asia/Kolkata'});
 
   // Quarter
   const q = Math.floor(now.getMonth() / 3);
@@ -6672,10 +6696,10 @@ function rcGoToday(){
 function renderResourceCalendar(){
   const mlEl = document.getElementById('rcMonthLabel');
   if (mlEl) mlEl.textContent = new Date(rcYear,rcMonth,1)
-    .toLocaleDateString('en-IN',{month:'long',year:'numeric'});
+    .toLocaleDateString('en-IN',{month:'long',year:'numeric',timeZone:'Asia/Kolkata'});
 
   const daysInMonth = new Date(rcYear,rcMonth+1,0).getDate();
-  const todayDS     = new Date().toLocaleDateString('en-CA');
+  const todayDS     = new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
   const pad = n => String(n).padStart(2,'0');
 
   const days = [];
@@ -6761,7 +6785,7 @@ function renderResourceCalendar(){
   const isViewingCurrentMonth = days.some(dd => dd.dateStr === todayDS);
   const refDS  = isViewingCurrentMonth ? todayDS : days[0]?.dateStr;
   const refLbl = isViewingCurrentMonth ? '' :
-    ` (${new Date(refDS).toLocaleDateString('en-IN',{day:'numeric',month:'short'})})`;
+    ` (${new Date(refDS).toLocaleDateString('en-IN',{day:'numeric',month:'short',timeZone:'Asia/Kolkata'})})`;
 
   // Availability summary
   renderRcAvailSummary(entryMeta, todayDS, visibleMembers);
@@ -6845,7 +6869,7 @@ function renderResourceCalendar(){
 function renderRcAvailSummary(entryMeta, todayDS, members){
   const el=document.getElementById('rcAvailSummary');
   if (!el) return;
-  const fmtD=ds=>new Date(ds).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
+  const fmtD=ds=>new Date(ds).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Kolkata'});
 
   const pills=(members||teamMembers).map(m=>{
     // Key transition dates: today + category boundaries for entries involving this member
@@ -6856,14 +6880,14 @@ function renderRcAvailSummary(entryMeta, todayDS, members){
         if (sd.catStatus==='Completed'||sd.catStatus==='Cancelled') return; // skip done cats
         if (sd.startStr>=todayDS) keyDates.add(sd.startStr);
         const dEnd=new Date(sd.endStr); dEnd.setDate(dEnd.getDate()+1);
-        const nxt=dEnd.toLocaleDateString('en-CA');
+        const nxt=dEnd.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
         if (nxt>=todayDS) keyDates.add(nxt);
       });
     });
     // Extend 120 days to catch future free windows
     for (let i=1;i<=120;i++){
       const dd=new Date(todayDS); dd.setDate(dd.getDate()+i);
-      keyDates.add(dd.toLocaleDateString('en-CA'));
+      keyDates.add(dd.toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'}));
     }
 
     const sorted=[...keyDates].sort();
